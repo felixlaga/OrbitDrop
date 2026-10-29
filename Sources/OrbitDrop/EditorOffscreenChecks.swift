@@ -61,14 +61,14 @@ public enum EditorOffscreenChecks {
         wideRatios.selectedSegment = 2; wideRatios.sendAction(wideRatios.action,to:wideRatios.target)
         try save(wide,id:"editor.crop.save",result:{ wideResult })
         let wideImage = try MediaEngine.loadImage(try require(wideResult,"No 16:9 crop callback"))
-        try check(wideImage.width == 640 && wideImage.height == 360,"16:9 crop export dimensions")
-        results.append("Crop: actual 16:9 Apply export is 640×360")
+        try check(wideImage.width == 640 && wideImage.height == 360,"16:9 preset keeps width and origin")
+        results.append("Crop: 16:9 preset keeps width and top-left corner; Apply exports 640×360")
 
         for (index,name,expectedWidth,expectedHeight) in [(0,"auto",960,800),(1,"square",960,960),(2,"wide",1422,800),(3,"portrait",960,1200)] {
             var saved: URL?
             let window = try coordinator.makeOffscreenWindow(action:"background",url:croppedURL,onSaved:{ saved = $0 })
             let control = try require(find("editor.background.ratio",in:window.contentView!) as? NSSegmentedControl,"Missing background ratio")
-            for (id,expected) in [("padding",160.0),("corners",184.0),("shadow",24.0)] {
+            for (id,expected) in [("padding",160.0),("corners",24.0),("shadow",24.0)] {
                 let slider = try require(find("editor.background.\(id)",in:window.contentView!) as? NSSlider,"Missing \(id)")
                 try check(slider.doubleValue == expected,"Reference default \(id)")
             }

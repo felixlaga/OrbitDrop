@@ -25,6 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var introduction: NSWindow?
     var working = false
     var testing = false
+    var optionWasDown = false
+    var restPoint = NSPoint.zero
+    var restSince: CFAbsoluteTime = 0
+    /// How long the pointer must rest during a drag before the wheel opens.
+    let restDelay: CFAbsoluteTime = 0.3
+    var toast: ProgressToast?
+    var cancelConversion = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -49,25 +56,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func buildWheel() {
-        let size: CGFloat = 420
+        let size = WheelGeometry.panelSize
         panel = WheelPanel(contentRect:NSRect(x:0,y:0,width:size,height:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
+        // No window shadow: a borderless window's shadow can outline the full square.
+        panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.level = .popUpMenu; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.transient,.ignoresCycle]
         panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
+        panel.appearance = NSAppearance(named:.aqua)
         panel.title = "OrbitDrop"
-        let glass = NSVisualEffectView(frame:NSRect(x:0,y:0,width:size,height:size))
-        glass.material = .popover; glass.blendingMode = .behindWindow; glass.state = .active
-        glass.wantsLayer = true; glass.layer?.cornerRadius = size/2; glass.layer?.masksToBounds = true
-        wheel = RadialMenu(frame:glass.bounds)
+        let root = NSView(frame:NSRect(x:0,y:0,width:size,height:size))
+        root.wantsLayer = true
+        if usesSystemGlass {
+            let d = WheelGeometry.radius*2
+            root.addSubview(makeGlassBackdrop(frame:NSRect(x:(size-d)/2,y:(size-d)/2,width:d,height:d),cornerRadius:d/2,clear:true))
+        }
+        wheel = RadialMenu(frame:root.bounds)
+        wheel.hasGlassBackdrop = usesSystemGlass
         wheel.autoresizingMask = [.width,.height]
-        glass.addSubview(wheel); panel.contentView = glass
+        root.addSubview(wheel); panel.contentView = root
         wheel.onAction = { [weak self] action,urls in self?.perform(action,urls:urls) }
         wheel.onToggle = { [weak self] in self?.toggleMode() }
         wheel.onDismiss = { [weak self] in self?.hideWheel() }
-        wheel.onDragModifiers = { [weak self] flags in
-            guard let self else { return }
-            self.setToolMode(flags.contains(.option))
-        }
     }
     func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
@@ -125,18 +134,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wheel.files = displayedFiles; wheel.file = displayedFiles.first
         wheel.isTools = tools; wheel.actions = tools ? WheelAction.tools : WheelAction.formats(for:displayedFiles.first)
         wheel.hovered = nil; wheel.busyLabel = nil
-        let frame = NSScreen.screens.first(where:{$0.frame.contains(point)})?.visibleFrame ?? NSScreen.main!.visibleFrame
+        let frame = NSScreen.screens.first(where:{$0.frame.contains(point)})?.frame ?? NSScreen.main!.frame
         let size = panel.frame.size
-        let x = max(frame.minX+4,min(point.x-size.width/2,frame.maxX-size.width-4))
-        let y = max(frame.minY+4,min(point.y-size.height/2,frame.maxY-size.height-4))
+        let x = max(frame.minX-WheelGeometry.margin,min(point.x-size.width/2,frame.maxX-size.width+WheelGeometry.margin))
+        let y = max(frame.minY-WheelGeometry.margin,min(point.y-size.height/2,frame.maxY-size.height+WheelGeometry.margin))
         panel.setFrameOrigin(NSPoint(x:x,y:y))
-        panel.alphaValue = 1
         panel.hidesOnDeactivate = !dragging
+        animateWheelIn()
         if dragging { panel.orderFrontRegardless() }
         else { NSApp.activate(ignoringOtherApps:true); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(wheel) }
         dragSession = dragging
     }
-    func hideWheel() { panel.orderOut(nil); wheel.hovered = nil; hideAfterDrag = nil; dragSession = false }
+    /// The wheel grows out of the pointer; labels follow a moment later.
+    func animateWheelIn() {
+        panel.alphaValue = 0
+        wheel.labelAlpha = 0
+        if let layer = panel.contentView?.layer {
+            let size = WheelGeometry.panelSize
+            layer.anchorPoint = CGPoint(x:0.5,y:0.5); layer.position = CGPoint(x:size/2,y:size/2)
+            let grow = CASpringAnimation(keyPath:"transform.scale")
+            grow.fromValue = 0.55; grow.toValue = 1
+            grow.damping = 22; grow.stiffness = 380; grow.mass = 1
+            grow.duration = grow.settlingDuration
+            layer.add(grow,forKey:"grow")
+        }
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.1; panel.animator().alphaValue = 1 }
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.06) { [weak self] in
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.1; self?.wheel.animator().labelAlpha = 1 }
+        }
+    }
+    func hideWheel() { panel.orderOut(nil); panel.alphaValue = 1; wheel.labelAlpha = 1; wheel.hovered = nil; hideAfterDrag = nil; dragSession = false }
     func toggleMode() { setToolMode(!showingTools) }
     func setToolMode(_ tools:Bool) {
         guard showingTools != tools else { return }
@@ -149,7 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let down = NSEvent.pressedMouseButtons & 1 != 0
         let option = NSEvent.modifierFlags.contains(.option)
         let now = CFAbsoluteTimeGetCurrent()
-        if panel.isVisible, down, dragSession { setToolMode(option) }
+        // Each press of Option flips between formats and tools while dragging.
+        if panel.isVisible, down, dragSession, option, !optionWasDown { toggleMode() }
+        optionWasDown = option
         if down && !wasDown {
             dragStart = nil; pendingDragFiles = []; initialDragPoint = NSEvent.mouseLocation; dragWasShown = false
         }
@@ -158,10 +187,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let changed = board.changeCount != lastDragChange
             if changed && dragStart == nil {
                 let urls = RadialMenu.urls(from:board)
-                if !urls.isEmpty && urls.allSatisfy({ supported($0) }) { dragStart = now; pendingDragFiles = urls }
+                if !urls.isEmpty && urls.allSatisfy({ supported($0) }) {
+                    dragStart = now; pendingDragFiles = urls
+                    restPoint = NSEvent.mouseLocation; restSince = now
+                }
             }
-            if let start = dragStart,now-start>0.24,!dragWasShown {
-                showWheel(at:NSEvent.mouseLocation,tools:option,dragging:true,files:pendingDragFiles); dragWasShown = true
+            // A drag that keeps moving passes through untouched; the wheel opens
+            // only once the pointer has rested in one spot for a moment.
+            if dragStart != nil, !dragWasShown {
+                let point = NSEvent.mouseLocation
+                if hypot(point.x-restPoint.x,point.y-restPoint.y) > 4 { restPoint = point; restSince = now }
+                else if now-restSince >= restDelay {
+                    showWheel(at:point,tools:false,dragging:true,files:pendingDragFiles); dragWasShown = true
+                }
             }
         }
         if !down && wasDown && dragSession { hideAfterDrag = now+0.22 }
@@ -172,42 +210,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func supported(_ url:URL)->Bool { ["png","jpg","jpeg","heic","heif","webp","tif","tiff","avif","bmp","gif","pdf"].contains(url.pathExtension.lowercased()) }
     func perform(_ action:WheelAction,urls:[URL]) {
         hideAfterDrag = nil
+        let point = NSEvent.mouseLocation
+        let wheelCenter = NSPoint(x:panel.frame.midX,y:panel.frame.midY)
         if WheelAction.tools.contains(where:{$0.key == action.key}) {
             currentFiles = urls
-            hideWheel(); for url in urls { openEditor(action.key,url:url) }; return
+            hideWheel(); for url in urls { openEditor(action.key,url:url,at:wheelCenter) }; return
         }
-        guard !working else { return }; working = true; wheel.busyLabel = "Converting…"
+        guard !working else { return }; working = true
+        hideWheel()
+        cancelConversion = false
+        let toast = ProgressToast(title:"Converting to \(action.label)",total:urls.count,at:point)
+        toast.onCancel = { [weak self] in self?.cancelConversion = true }
+        self.toast = toast
+        toast.show()
         DispatchQueue.global(qos:.userInitiated).async {
             var outputs:[URL] = [],failures:[String] = []
-            for url in urls {
+            for (index,url) in urls.enumerated() {
+                if self.cancelConversion { break }
                 do { outputs += try MediaEngine.convert(url,to:action.key) }
                 catch { failures.append("\(url.lastPathComponent): \(error.localizedDescription)") }
+                let saved = index+1-failures.count
+                DispatchQueue.main.async { toast.update(saved:saved,total:urls.count) }
             }
             DispatchQueue.main.async {
-                self.working = false; self.hideWheel()
+                self.working = false
+                toast.finish()
                 if let last = outputs.last { self.currentFiles = [last] }
                 if !failures.isEmpty { self.showError(NSError(domain:"OrbitDrop",code:1,userInfo:[NSLocalizedDescriptionKey:failures.joined(separator:"\n\n")])) }
-                else if !outputs.isEmpty { self.showToast("Saved \(outputs.count == 1 ? outputs[0].lastPathComponent : "\(outputs.count) files")") }
             }
         }
     }
-    func openEditor(_ action:String,url:URL) {
-        editor.open(action:action,url:url) { [weak self] output in self?.currentFiles = [output]; self?.showToast("Saved \(output.lastPathComponent)") }
+    func openEditor(_ action:String,url:URL,at point:NSPoint? = nil) {
+        editor.open(action:action,url:url,at:point) { [weak self] output in self?.currentFiles = [output] }
     }
     func showError(_ error:Error) {
         NSApp.activate(ignoringOtherApps:true)
         let alert = NSAlert(); alert.messageText = "Couldn’t complete this file"; alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning; alert.runModal()
-    }
-    func showToast(_ text:String) {
-        let toast = NSPanel(contentRect:NSRect(x:0,y:0,width:340,height:54),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-        toast.isOpaque = false; toast.backgroundColor = .clear; toast.level = .floating; toast.hasShadow = true
-        let glass = NSVisualEffectView(frame:NSRect(x:0,y:0,width:340,height:54)); glass.material = .popover; glass.state = .active
-        glass.wantsLayer = true; glass.layer?.cornerRadius = 14; glass.layer?.masksToBounds = true
-        let label = NSTextField(labelWithString:"✓  "+text); label.font = .systemFont(ofSize:12,weight:.medium); label.lineBreakMode = .byTruncatingMiddle
-        label.frame = NSRect(x:17,y:18,width:306,height:18); glass.addSubview(label); toast.contentView = glass
-        let screen = NSScreen.main!.visibleFrame; toast.setFrameOrigin(NSPoint(x:screen.midX-170,y:screen.minY+28)); toast.orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline:.now()+2.5) { toast.orderOut(nil) }
     }
     func registerHotkey() {
         let callback:EventHandlerUPP = { _,event,context in
@@ -226,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "OrbitDrop"; window.isReleasedWhenClosed = false; window.center()
         let view = NSVisualEffectView(frame:NSRect(x:0,y:0,width:430,height:345)); view.material = .popover; view.state = .active
         let heading = NSTextField(labelWithString:"Your files. One gesture."); heading.font = .systemFont(ofSize:25,weight:.semibold); heading.frame = NSRect(x:28,y:284,width:374,height:34); view.addSubview(heading)
-        let body = NSTextField(wrappingLabelWithString:"Drag an image or PDF in Finder. A wheel appears around your pointer. Drop on a format to convert.\n\nHold ⌥ Option while dragging to reveal Crop, Add BG, and the other tools. Release ⌥ to switch back.\n\nClick the center to switch wheels; drag it to move. Escape dismisses. ⌃⌥Space opens or hides the wheel.\n\nNew files are saved beside the original. OrbitDrop lives in the menu bar, with no Dock icon.")
+        let body = NSTextField(wrappingLabelWithString:"Drag an image or PDF in Finder and hold still for a moment. A wheel appears around your pointer. Drop on a format to convert.\n\nPress ⌥ Option while dragging to switch to Crop, Add BG, and the other tools. Press it again to switch back.\n\nClick the center to switch wheels; drag it to move. Escape dismisses. ⌃⌥Space opens or hides the wheel.\n\nNew files are saved beside the original. OrbitDrop lives in the menu bar, with no Dock icon.")
         body.font = .systemFont(ofSize:13); body.textColor = .secondaryLabelColor; body.frame = NSRect(x:28,y:61,width:374,height:210); view.addSubview(body)
         let button = NSButton(title:"Open a File…",target:self,action:#selector(chooseFile)); button.bezelStyle = .rounded; button.keyEquivalent = "\r"; button.frame = NSRect(x:276,y:20,width:128,height:30); view.addSubview(button)
         window.contentView = view; introduction = window; NSApp.activate(ignoringOtherApps:true); window.makeKeyAndOrderFront(nil)
@@ -253,7 +292,7 @@ if let sourceIndex = CommandLine.arguments.firstIndex(of:"--convert") {
         exit(0)
     } catch { fputs(error.localizedDescription+"\n",stderr); exit(1) }
 }
-if CommandLine.arguments.contains("--version") { print("OrbitDrop 1.0.0"); exit(0) }
+if CommandLine.arguments.contains("--version") { print("OrbitDrop 1.1.0"); exit(0) }
 
 let application = NSApplication.shared
 let delegate = AppDelegate()

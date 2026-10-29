@@ -2,9 +2,11 @@ OrbitDrop
 
 1. Drag OrbitDrop into Applications.
 2. Open it from Applications. Look for the circular menu-bar icon.
-3. Drag an image or PDF in Finder, then drop it on the wheel.
+3. Drag an image or PDF in Finder and hold still for a moment.
+   Drop it on the wheel that appears.
 
-Hold Option while dragging for Crop, Add BG, and other tools.
+Press Option while dragging to switch to Crop, Add BG, and the
+other tools. Press it again to switch back.
 Click the center to switch wheels when opening a file from the menu.
 Drag the center to move the wheel. Escape dismisses it.
 

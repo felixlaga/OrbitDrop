@@ -5,17 +5,16 @@ Verified on an Apple Silicon Mac running macOS 26.6.2. Deployment target is macO
 ## Passed
 
 - The complete native application compiles in Swift 5 mode.
-- All reference wheel action orders and hit targets match the extracted frames. Tests cover center/outside exclusion, busy and empty-input guards, file URL decoding, and stale hover reset when changing wheel sizes.
-- 97 media integration assertions: real output types and dimensions for JPG, PNG, WebP, HEIC, TIFF, AVIF, BMP; atomic non-overwriting writes, concurrent filenames and symlinks; EXIF orientation; metadata removal; all PDF pages at 300 DPI, page rotation, PDF content scaling and annotations, native text and mixed-content OCR; valid DOCX ZIP/XML/image relationships and Unicode; actual JPEG size reduction; malformed input, page-truncation rejection, and concurrent rollback behavior.
-- Off-screen native editor tests dispatch events directly to hidden controls. Crop corner dragging, selection movement, five fixed aspect ratios, free cropping, actual Apply callbacks, JPEG preservation, and exact 640×480 / 640×360 exports pass.
-- Actual Add BG Save callbacks export PNG at the expected Auto, 1:1, 16:9, and 4:5 dimensions. Padding/corners/shadow defaults match the recording. Transparent image pixels remain transparent over the background instead of gaining an opaque shadow plate.
-- All seven editor panels were rendered off-screen and visually inspected for layout. Crop and Add BG use reference-sized source images and the demonstrated settings.
-- A relocated app bundle under a path containing spaces and Japanese characters was exercised through its no-window CLI with `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. All ten conversion formats passed, the original remained unchanged, and a second conversion selected a new filename.
-- The application bundle passes local code-signature verification. WebP and AVIF helpers are bundled with their licenses and require only Apple system libraries.
+- **UI redo, measured from the recording.** Frames were extracted at 4–30 fps and measured in points, using Finder's 12 pt desktop labels as a ruler. Wheel: 238 pt across, wedges from 47 to 112 pt radius, 6 pt glass gaps, 68 × 34 pt centre pill. Crop window 370 × 560 pt, Add BG window 418 × 618 pt, progress card 312 × 93 pt.
+- Off-screen renders of the 4-, 8- and 7-wedge wheels were composited over the video's own wallpaper at the same position and compared side by side with the matching frames, including hover states and the centre label. Editor snapshots were compared the same way.
+- Wheel tests cover action order, every hit target at the new size, centre/outside exclusion, busy and empty-input guards, and pasteboard decoding.
+- 97 media integration assertions pass (unchanged engine): JPG, PNG, WebP, HEIC, TIFF, AVIF, BMP, PDF, DOCX, TXT, compression and metadata.
+- Off-screen editor tests: crop corner drag, selection move, five fixed ratios, free crop, Apply export sizes, and Add BG exports at Auto, 1:1, 16:9 and 4:5. Add BG defaults match the recording: Padding 160 px, Corners 24 px, Shadow 24 px, Auto.
+- The packaged bundle passes the relocated-path CLI check for all formats.
 
 ## Evidence boundaries
 
-The radial menu was initially inspected in the live native app. The user then requested that testing stop covering their laptop, so the test app was stopped and all remaining verification ran off-screen. The app is left closed. A complete live Finder drag-and-drop end-to-end session was not performed. Native drag callbacks and the polling logic received two independent code-review rounds; reported defects were fixed. Menu-bar Open File is also available as a direct entry point.
+The first version's radial menu was inspected in the live native app. The user then requested that testing stop covering their laptop, so the test app was stopped and all remaining verification ran off-screen. The app is left closed. A complete live Finder drag-and-drop end-to-end session was not performed. Native drag callbacks and the polling logic received two independent code-review rounds; reported defects were fixed. Menu-bar Open File is also available as a direct entry point.
 
 Off-screen snapshots verify native control layout and rendering, but cannot reproduce behind-window desktop vibrancy. The recording is a phone capture of a desktop demo; original source code, exact physical window dimensions, and hidden tool screens were not supplied. Pixel-identical parity with the original app is therefore not claimed.
 

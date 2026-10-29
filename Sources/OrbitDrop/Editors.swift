@@ -10,18 +10,32 @@ public final class EditorCoordinator: NSObject {
     public override init() { super.init() }
     public var openWindows: [NSWindow] { editors.values.compactMap(\.window) }
 
-    public func open(action: String, url: URL, onSaved: @escaping (URL) -> Void) {
+    public func open(action: String, url: URL, at point: NSPoint? = nil, onSaved: @escaping (URL) -> Void) {
         if !Thread.isMainThread {
-            DispatchQueue.main.async { self.open(action: action, url: url, onSaved: onSaved) }
+            DispatchQueue.main.async { self.open(action: action, url: url, at: point, onSaved: onSaved) }
             return
         }
         NSApp.setActivationPolicy(.accessory)
         do {
             let window = try makeOffscreenWindow(action: action, url: url, onSaved: onSaved)
             (window.windowController as? ODEditorController)?.presentsErrors = true
-            window.center()
+            // The editor opens where the wheel was, kept fully on screen.
+            let anchor = point ?? NSEvent.mouseLocation
+            let screen = (NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main)?.visibleFrame ?? .zero
+            let size = window.frame.size
+            window.setFrameOrigin(NSPoint(x: max(screen.minX+8, min(anchor.x-size.width/2, screen.maxX-size.width-8)),
+                                          y: max(screen.minY+8, min(anchor.y-size.height/2, screen.maxY-size.height-8))))
+            window.alphaValue = 0
+            if let layer = window.contentView?.layer {
+                layer.anchorPoint = CGPoint(x: 0.5, y: 0.5); layer.position = CGPoint(x: size.width/2, y: size.height/2)
+                let grow = CABasicAnimation(keyPath: "transform.scale")
+                grow.fromValue = 0.92; grow.toValue = 1; grow.duration = 0.2
+                grow.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+                layer.add(grow, forKey: "grow")
+            }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.16; window.animator().alphaValue = 1 }
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
@@ -56,7 +70,7 @@ enum ODEditorError: LocalizedError {
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
 
-private let odOrange = NSColor(calibratedRed: 0.92, green: 0.29, blue: 0.055, alpha: 1)
+private var odOrange: NSColor { orbitAccent }
 
 class ODFlippedView: NSView {
     override var isFlipped: Bool { true }
@@ -72,39 +86,57 @@ private final class ODTitleBar: ODFlippedView {
     override var mouseDownCanMoveWindow: Bool { true }
 }
 
+/// Small rounded-rectangle buttons from the reference: grey “Reset”, orange primary action.
 private final class ODActionButton: NSButton {
     var handler: (() -> Void)?
+    private let primary: Bool
     init(_ title: String, frame: NSRect, identifier: String, primary: Bool = false, handler: (() -> Void)? = nil) {
+        self.primary = primary
         super.init(frame: frame)
         self.title = title
         self.handler = handler
         self.identifier = NSUserInterfaceItemIdentifier(identifier)
         setAccessibilityIdentifier(identifier)
-        font = .systemFont(ofSize: 11, weight: primary ? .semibold : .medium)
-        bezelStyle = .rounded
-        controlSize = .small
+        font = .systemFont(ofSize: 11, weight: primary ? .medium : .regular)
         isBordered = false
-        wantsLayer = true
-        layer?.cornerRadius = 5
-        layer?.backgroundColor = (primary ? odOrange : NSColor.labelColor.withAlphaComponent(0.065)).cgColor
-        contentTintColor = primary ? .white : .labelColor
-        attributedTitle = NSAttributedString(string: title, attributes: [.font: font!, .foregroundColor: primary ? NSColor.white : NSColor.labelColor])
         target = self
         action = #selector(invoke)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     @objc private func invoke() { handler?() }
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5)
+        if primary { (isHighlighted ? odOrange.blended(withFraction: 0.18, of: .black)! : odOrange).withAlphaComponent(isEnabled ? 1 : 0.5).setFill() }
+        else { NSColor.black.withAlphaComponent(isHighlighted ? 0.13 : 0.075).setFill() }
+        shape.fill()
+        if let image, title.isEmpty {
+            let tinted = image.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .regular).applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.labelColor.withAlphaComponent(0.7)]))) ?? image
+            let s = tinted.size
+            tinted.draw(in: NSRect(x: bounds.midX-s.width/2, y: bounds.midY-s.height/2, width: s.width, height: s.height))
+            return
+        }
+        let text = NSAttributedString(string: title, attributes: [.font: font ?? .systemFont(ofSize: 11), .foregroundColor: primary ? NSColor.white : NSColor.labelColor.withAlphaComponent(0.72)])
+        let size = text.size()
+        text.draw(at: NSPoint(x: bounds.midX-size.width/2, y: bounds.midY-size.height/2))
+    }
 }
 
 @discardableResult
-private func odLabel(_ text: String, _ frame: NSRect, in parent: NSView, size: CGFloat = 11, weight: NSFont.Weight = .regular, secondary: Bool = false) -> NSTextField {
+private func odLabel(_ text: String, _ frame: NSRect, in parent: NSView, size: CGFloat = 10.5, weight: NSFont.Weight = .regular, secondary: Bool = false) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.frame = frame
     label.font = .systemFont(ofSize: size, weight: weight)
-    label.textColor = secondary ? .secondaryLabelColor : .labelColor
+    label.textColor = secondary ? NSColor.labelColor.withAlphaComponent(0.58) : .labelColor
     label.lineBreakMode = .byTruncatingTail
     parent.addSubview(label)
     return label
+}
+
+/// A label vertically centred on `centerY` (flipped coordinates).
+@discardableResult
+private func odRowLabel(_ text: String, x: CGFloat, centerY: CGFloat, width: CGFloat = 80, in parent: NSView) -> NSTextField {
+    odLabel(text, CGRect(x: x, y: centerY-7.5, width: width, height: 15), in: parent, secondary: true)
 }
 
 private func odIdentifier(_ view: NSView, _ id: String) {
@@ -121,9 +153,12 @@ private func odDraw(_ image: CGImage, in rect: CGRect) {
     NSImage(cgImage: image, size: CGSize(width: image.width, height: image.height)).draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
 }
 
+/// Editor windows: a glass card with a 38 pt title bar and a 49 pt action bar.
 class ODEditorController: NSWindowController, NSWindowDelegate {
+    static let titleBarHeight: CGFloat = 38
+    static let actionBarHeight: CGFloat = 49
     let sourceURL: URL
-    let surface = ODFlippedView(frame: CGRect(x: 0, y: 0, width: 420, height: 630))
+    let surface: ODFlippedView
     var onSaved: ((URL) -> Void)?
     var onClosed: (() -> Void)?
     var presentsErrors = false
@@ -131,10 +166,13 @@ class ODEditorController: NSWindowController, NSWindowDelegate {
     private(set) var saveButton: NSButton!
     private var status: NSTextField!
     private var isSaving = false
+    var contentWidth: CGFloat { surface.bounds.width }
+    var actionBarTop: CGFloat { surface.bounds.height - Self.actionBarHeight }
 
-    init(url: URL, title: String, saveTitle: String, action: String) {
+    init(url: URL, title: String, saveTitle: String, action: String, size: CGSize = CGSize(width: 420, height: 630)) {
         sourceURL = url
-        let panel = ODEditorPanel(contentRect: CGRect(x: 0, y: 0, width: 420, height: 630), styleMask: [.borderless], backing: .buffered, defer: false)
+        surface = ODFlippedView(frame: CGRect(origin: .zero, size: size))
+        let panel = ODEditorPanel(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         super.init(window: panel)
         panel.title = title
         panel.setAccessibilityIdentifier("editor.\(action).window")
@@ -148,45 +186,46 @@ class ODEditorController: NSWindowController, NSWindowDelegate {
         panel.collectionBehavior = [.fullScreenAuxiliary]
         panel.appearance = NSAppearance(named: .aqua)
         panel.delegate = self
+        let radius: CGFloat = 20
+        let root = NSView(frame: surface.frame)
+        root.wantsLayer = true
+        // Clear glass plus a light wash, so the wallpaper's colour shows through as in the recording.
+        root.addSubview(makeGlassBackdrop(frame: root.bounds, cornerRadius: radius, clear: true))
+        let tint = NSView(frame: root.bounds); tint.wantsLayer = true
+        tint.layer?.cornerRadius = radius
+        tint.layer?.backgroundColor = (usesSystemGlass ? NSColor.white.withAlphaComponent(0.2) : NSColor(calibratedRed: 1, green: 0.93, blue: 0.86, alpha: 0.16)).cgColor
+        root.addSubview(tint)
         surface.wantsLayer = true
-        surface.layer?.cornerRadius = 22
-        surface.layer?.masksToBounds = true
-        surface.layer?.borderWidth = 0.75
-        surface.layer?.borderColor = NSColor.white.withAlphaComponent(0.32).cgColor
-        panel.contentView = surface
-        let glass = NSVisualEffectView(frame: surface.bounds)
-        glass.material = .hudWindow
-        glass.blendingMode = .behindWindow
-        glass.state = .active
-        glass.autoresizingMask = [.width, .height]
-        glass.wantsLayer = true
-        glass.layer?.backgroundColor = NSColor(calibratedRed: 1, green: 0.73, blue: 0.38, alpha: 0.065).cgColor
-        surface.addSubview(glass)
-        let titleBar = ODTitleBar(frame: CGRect(x: 0, y: 0, width: 420, height: 40))
+        surface.layer?.cornerRadius = radius
+        surface.layer?.borderWidth = 0.5
+        surface.layer?.borderColor = NSColor.white.withAlphaComponent(0.38).cgColor
+        root.addSubview(surface)
+        panel.contentView = root
+        let titleBar = ODTitleBar(frame: CGRect(x: 0, y: 0, width: size.width, height: Self.titleBarHeight))
         surface.addSubview(titleBar)
-        let heading = odLabel(title, CGRect(x: 58, y: 12, width: 304, height: 20), in: titleBar, size: 13, weight: .semibold)
+        let heading = odLabel(title, CGRect(x: 50, y: 10.5, width: size.width-100, height: 18), in: titleBar, size: 14, weight: .semibold)
         heading.alignment = .center
-        let close = ODActionButton("×", frame: CGRect(x: 13, y: 11, width: 20, height: 20), identifier: "editor.\(action).close") { [weak self] in self?.close() }
-        close.font = .systemFont(ofSize: 16)
-        close.layer?.cornerRadius = 10
-        close.setAccessibilityLabel("Close \(title)")
+        heading.textColor = NSColor.labelColor.withAlphaComponent(0.82)
+        let close = CloseCircleButton(frame: CGRect(x: 12, y: 8, width: 22, height: 22), identifier: "editor.\(action).close", label: "Close \(title)")
+        close.handler = { [weak self] in self?.close() }
         titleBar.addSubview(close)
-        separator(y: 40)
-        separator(y: 582)
-        let reset = ODActionButton("Reset", frame: CGRect(x: 16, y: 600, width: 48, height: 21), identifier: "editor.\(action).reset") { [weak self] in self?.resetEditor() }
+        separator(y: Self.titleBarHeight)
+        separator(y: actionBarTop)
+        let buttonY = size.height - Self.actionBarHeight/2 - 10
+        let reset = ODActionButton("Reset", frame: CGRect(x: 14, y: buttonY, width: 46, height: 20), identifier: "editor.\(action).reset") { [weak self] in self?.resetEditor() }
         surface.addSubview(reset)
-        let width = max(58, CGFloat(saveTitle.count) * 6.15 + 16)
-        let save = ODActionButton(saveTitle, frame: CGRect(x: 404 - width, y: 600, width: width, height: 21), identifier: "editor.\(action).save", primary: true) { [weak self] in self?.saveEditor() }
+        let width = ceil(NSAttributedString(string: saveTitle, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).size().width) + 20
+        let save = ODActionButton(saveTitle, frame: CGRect(x: size.width - 14 - width, y: buttonY, width: width, height: 20), identifier: "editor.\(action).save", primary: true) { [weak self] in self?.saveEditor() }
         save.keyEquivalent = "\r"
         saveButton = save
         surface.addSubview(save)
-        status = odLabel("", CGRect(x: 72, y: 603, width: max(40, 324 - width), height: 16), in: surface, size: 10, secondary: true)
+        status = odLabel("", CGRect(x: 70, y: buttonY+3, width: max(40, size.width - width - 98), height: 15), in: surface, size: 10, secondary: true)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     private func separator(y: CGFloat) {
-        let line = NSView(frame: CGRect(x: 0, y: y, width: 420, height: 0.5))
+        let line = NSView(frame: CGRect(x: 0, y: y, width: surface.bounds.width, height: 0.5))
         line.wantsLayer = true
-        line.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor
+        line.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.09).cgColor
         surface.addSubview(line)
     }
     func resetEditor() {}
@@ -230,12 +269,15 @@ final class ODPreviewView: ODFlippedView {
     var image: CGImage? { didSet { needsDisplay = true } }
     var inset: CGFloat = 12
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.035).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+        NSColor.black.withAlphaComponent(0.035).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
         if let image = image { odDraw(image, in: odFit(CGSize(width: image.width, height: image.height), in: bounds.insetBy(dx: inset, dy: inset))) }
     }
 }
 
+/// Segmented control drawn as in the reference: a light track, an orange selected
+/// segment, and thin dividers between unselected neighbours. It stays orange when
+/// the window is inactive, as in the recording.
 private final class ODRatioControl: NSSegmentedControl {
     var handler: ((Int) -> Void)?
     override var selectedSegment: Int { didSet { needsDisplay = true } }
@@ -244,9 +286,8 @@ private final class ODRatioControl: NSSegmentedControl {
         segmentCount = labels.count
         for (index, label) in labels.enumerated() { setLabel(label, forSegment: index); setWidth(frame.width / CGFloat(labels.count), forSegment: index) }
         trackingMode = .selectOne
-        segmentStyle = .rounded
         controlSize = .small
-        font = .systemFont(ofSize: 10)
+        font = .systemFont(ofSize: 11)
         selectedSegment = 0
         self.handler = handler
         target = self
@@ -255,27 +296,63 @@ private final class ODRatioControl: NSSegmentedControl {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     @objc private func changed() { handler?(selectedSegment) }
+    private var segmentWidth: CGFloat { bounds.width / CGFloat(max(1, segmentCount)) }
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 0, dy: 3)
-        NSColor.labelColor.withAlphaComponent(0.075).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-        let width = rect.width / CGFloat(segmentCount)
+        NSColor.black.withAlphaComponent(0.065).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
         for index in 0..<segmentCount {
-            let part = CGRect(x: rect.minX + CGFloat(index)*width, y: rect.minY, width: width, height: rect.height)
+            let part = CGRect(x: CGFloat(index)*segmentWidth, y: 0, width: segmentWidth, height: bounds.height)
             if index == selectedSegment {
-                odOrange.setFill()
-                NSBezierPath(roundedRect: part, xRadius: 4, yRadius: 4).fill()
+                orbitAccent.setFill()
+                NSBezierPath(roundedRect: part, xRadius: 5, yRadius: 5).fill()
+            } else if index > 0, index-1 != selectedSegment {
+                NSColor.black.withAlphaComponent(0.18).setFill()
+                NSRect(x: part.minX-0.5, y: bounds.midY-5, width: 1, height: 10).fill()
             }
-            let label = (label(forSegment:index) ?? "") as NSString
-            let attributes: [NSAttributedString.Key: Any] = [.font:NSFont.systemFont(ofSize:10,weight:index == selectedSegment ? .semibold : .regular),.foregroundColor:index == selectedSegment ? NSColor.white : NSColor.labelColor.withAlphaComponent(0.72)]
-            let size = label.size(withAttributes:attributes)
-            label.draw(at:CGPoint(x:part.midX-size.width/2,y:part.midY-size.height/2),withAttributes:attributes)
+            let selected = index == selectedSegment
+            let text = NSAttributedString(string: label(forSegment: index) ?? "", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: selected ? .medium : .regular),
+                .foregroundColor: selected ? NSColor.white : NSColor.labelColor.withAlphaComponent(0.72)])
+            let size = text.size()
+            text.draw(at: CGPoint(x: part.midX-size.width/2, y: part.midY-size.height/2))
         }
     }
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow,from:nil)
-        selectedSegment = max(0,min(segmentCount-1,Int(point.x / bounds.width * CGFloat(segmentCount))))
-        handler?(selectedSegment)
+        let point = convert(event.locationInWindow, from: nil)
+        let index = max(0, min(segmentCount-1, Int(point.x / segmentWidth)))
+        guard index != selectedSegment else { return }
+        selectedSegment = index
+        handler?(index)
+    }
+}
+
+/// Slider drawn as in the reference: thin track, orange fill, white capsule knob.
+private final class ODSliderCell: NSSliderCell {
+    static let knobSize = CGSize(width: 18, height: 12)
+    override func knobRect(flipped: Bool) -> NSRect {
+        let bar = barRect(flipped: flipped)
+        let fraction = CGFloat((doubleValue-minValue)/max(0.0001, maxValue-minValue))
+        let k = Self.knobSize
+        let x = bar.minX + (bar.width-k.width)*fraction
+        return NSRect(x: x, y: bar.midY-k.height/2, width: k.width, height: k.height)
+    }
+    override func drawBar(inside rect: NSRect, flipped: Bool) {
+        let track = CGRect(x: rect.minX, y: rect.midY-1.5, width: rect.width, height: 3)
+        NSColor.white.withAlphaComponent(0.62).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
+        let knob = knobRect(flipped: flipped)
+        let progress = CGRect(x: track.minX, y: track.minY, width: max(0, knob.midX-track.minX), height: track.height)
+        orbitAccent.setFill()
+        NSBezierPath(roundedRect: progress, xRadius: 1.5, yRadius: 1.5).fill()
+    }
+    override func drawKnob(_ knobRect: NSRect) {
+        let knob = knobRect.insetBy(dx: 0.5, dy: 0.5)
+        let shape = NSBezierPath(roundedRect: knob, xRadius: knob.height/2, yRadius: knob.height/2)
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow(); shadow.shadowOffset = CGSize(width: 0, height: -0.5); shadow.shadowBlurRadius = 2; shadow.shadowColor = NSColor.black.withAlphaComponent(0.22); shadow.set()
+        NSColor(calibratedWhite: 0.985, alpha: 1).setFill(); shape.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.black.withAlphaComponent(0.08).setStroke(); shape.lineWidth = 0.5; shape.stroke()
     }
 }
 
@@ -331,8 +408,9 @@ final class ODCropCanvas: ODFlippedView {
         }
         odOrange.setFill()
         for (index, p) in handles(selected).enumerated() {
-            let size = index % 2 == 0 ? CGSize(width: 8, height: 8) : ((index == 1 || index == 5) ? CGSize(width: 17, height: 4) : CGSize(width: 4, height: 17))
-            NSBezierPath(roundedRect: CGRect(x: p.x-size.width/2, y:p.y-size.height/2, width:size.width,height:size.height), xRadius:2,yRadius:2).fill()
+            let size = index % 2 == 0 ? CGSize(width: 10, height: 10) : ((index == 1 || index == 5) ? CGSize(width: 20, height: 5) : CGSize(width: 5, height: 20))
+            let radius: CGFloat = index % 2 == 0 ? 2 : 2.5
+            NSBezierPath(roundedRect: CGRect(x: p.x-size.width/2, y:p.y-size.height/2, width:size.width,height:size.height), xRadius:radius,yRadius:radius).fill()
         }
     }
     private func sourcePoint(_ point: CGPoint) -> CGPoint {
@@ -407,9 +485,12 @@ final class ODCropCanvas: ODFlippedView {
     func setRatio(_ ratio: CGFloat?) {
         aspectRatio = ratio
         guard let ratio = ratio else { return }
-        var size = selection.size
-        if size.width / size.height > ratio { size.width = size.height*ratio } else { size.height = size.width/ratio }
-        selection = bounded(CGRect(x: selection.midX-size.width/2, y: selection.midY-size.height/2, width:size.width,height:size.height))
+        // As in the reference, a preset keeps the selection's top-left corner and width,
+        // then fits the new height inside the image.
+        var size = CGSize(width: selection.width, height: selection.width/ratio)
+        let fit = min(1, sourceBounds.width/size.width, sourceBounds.height/size.height)
+        size = CGSize(width: size.width*fit, height: size.height*fit)
+        selection = bounded(CGRect(origin: selection.origin, size: size))
     }
     func setSize(width: CGFloat, height: CGFloat, changingWidth: Bool) {
         guard width.isFinite, height.isFinite else { return }
@@ -430,21 +511,22 @@ private final class ODCropController: ODEditorController, NSTextFieldDelegate {
     private let widthField = NSTextField(), heightField = NSTextField()
     init(url: URL, image: CGImage) {
         canvas = ODCropCanvas(image: image)
-        super.init(url: url, title: "Crop Image", saveTitle: "Apply", action: "crop")
-        canvas.frame = CGRect(x: 30, y: 52, width: 360, height: 418)
+        super.init(url: url, title: "Crop Image", saveTitle: "Apply", action: "crop", size: CGSize(width: 370, height: 560))
+        canvas.frame = CGRect(x: 16, y: 47, width: 338, height: 382)
         surface.addSubview(canvas)
-        odLabel("Aspect ratio", CGRect(x:18,y:490,width:92,height:18), in:surface, size:11, secondary:true)
-        ratio = ODRatioControl(labels: ["Free","1:1","16:9","9:16","4:3","3:4"], frame:CGRect(x:128,y:486,width:274,height:24), id:"editor.crop.ratio") { [weak self] index in
+        odRowLabel("Aspect ratio", x: 15, centerY: 455, in: surface)
+        ratio = ODRatioControl(labels: ["Free","1:1","16:9","9:16","4:3","3:4"], frame:CGRect(x:121,y:445,width:233,height:20), id:"editor.crop.ratio") { [weak self] index in
             let ratios: [CGFloat?] = [nil,1,16.0/9,9.0/16,4.0/3,3.0/4]
             self?.canvas.setRatio(ratios[index])
         }
         surface.addSubview(ratio)
-        odLabel("W", CGRect(x:18,y:529,width:14,height:17), in:surface, size:10, secondary:true)
-        odLabel("H", CGRect(x:113,y:529,width:14,height:17), in:surface, size:10, secondary:true)
-        odLabel("px", CGRect(x:211,y:529,width:28,height:17), in:surface, size:10, secondary:true)
-        for (field, x, id) in [(widthField,CGFloat(35),"editor.crop.width"),(heightField,CGFloat(130),"editor.crop.height")] {
-            field.frame = CGRect(x:x,y:524,width:73,height:24)
+        odRowLabel("W", x: 16, centerY: 485, width: 12, in: surface)
+        odRowLabel("H", x: 96, centerY: 485, width: 12, in: surface)
+        odRowLabel("px", x: 174, centerY: 485, width: 24, in: surface)
+        for (field, x, id) in [(widthField,CGFloat(30),"editor.crop.width"),(heightField,CGFloat(108),"editor.crop.height")] {
+            field.frame = CGRect(x:x,y:475.5,width:59,height:19)
             field.font = .monospacedDigitSystemFont(ofSize:11,weight:.regular)
+            field.controlSize = .small
             field.bezelStyle = .roundedBezel
             let formatter = NumberFormatter()
             formatter.locale = Locale(identifier:"en_US_POSIX")
@@ -479,22 +561,29 @@ private final class ODCropController: ODEditorController, NSTextFieldDelegate {
 }
 
 struct ODBackgroundStyle {
+    /// A soft colour blob: centre as fractions of the canvas (y up), radius as a fraction of its longer side.
+    struct Blob { let color: NSColor; let x: CGFloat; let y: CGFloat; let radius: CGFloat }
     let name: String
     let colors: [NSColor]
     var spectrum: Bool = false
+    var blobs: [Blob] = []
     static func rgb(_ value: UInt32) -> NSColor { NSColor(calibratedRed: CGFloat((value>>16)&255)/255, green: CGFloat((value>>8)&255)/255, blue: CGFloat(value&255)/255, alpha:1) }
+    private static func b(_ c: UInt32, _ x: CGFloat, _ y: CGFloat, _ r: CGFloat) -> Blob { Blob(color: rgb(c), x: x, y: y, radius: r) }
+    /// Mesh-like presets matching the swatches in the reference recording.
     static let gradients: [ODBackgroundStyle] = [
         .init(name:"Sunset",colors:[rgb(0xff718d),rgb(0xffad60)],spectrum:true),
-        .init(name:"Daybreak",colors:[rgb(0x7199ff),rgb(0xffc687),rgb(0xffffff)]),
-        .init(name:"Sorbet",colors:[rgb(0xfa8ce3),rgb(0xdff36b),rgb(0x5edbd9)]),
-        .init(name:"Cloud",colors:[rgb(0xa7c5f6),rgb(0xffeef2),rgb(0xffffff)]),
-        .init(name:"Lavender",colors:[rgb(0x8885e5),rgb(0xe6b4eb),rgb(0xffdfc7)]),
-        .init(name:"Garden",colors:[rgb(0x123d35),rgb(0x68b77e),rgb(0xf86b83)]),
-        .init(name:"Sky",colors:[rgb(0x9c9cf1),rgb(0x64b7ed),rgb(0x6de7dc)]),
-        .init(name:"Lagoon",colors:[rgb(0x4778ad),rgb(0x38c3c7),rgb(0xa6efeb)]),
-        .init(name:"Ice",colors:[rgb(0x5d8bdf),rgb(0xe0c8ec),rgb(0xe8f4ff)])
+        .init(name:"Daybreak",colors:[rgb(0x8ea8f2),rgb(0xe9e6f2),rgb(0xf8f6f6)],blobs:[b(0xa58bf0,0.05,1,0.5),b(0xf6b38a,0.98,0.98,0.4)]),
+        .init(name:"Sorbet",colors:[rgb(0xf2e35c)],blobs:[b(0xf27ac0,0.9,0.95,0.6),b(0xe8453c,0.02,0.02,0.45),b(0x7cd69a,0.18,0.5,0.4),b(0x58c8f0,1,0.3,0.5)]),
+        .init(name:"Cloud",colors:[rgb(0xf6f1f4)],blobs:[b(0xd9c3ec,0,1,0.7),b(0xf3b9cf,1,0,0.7)]),
+        .init(name:"Lavender",colors:[rgb(0xedb4d4)],blobs:[b(0xb79ae6,0,1,0.7),b(0xf3a3c6,0.6,0.3,0.5),b(0xc9a0e8,1,0,0.6)]),
+        .init(name:"Garden",colors:[rgb(0x1e3a2e)],blobs:[b(0xe23a3f,0.95,0.95,0.6),b(0xf08a3c,0.55,0,0.55),b(0x3e9d63,0.1,0.4,0.45),b(0x0b1410,0.05,0.95,0.45)]),
+        .init(name:"Sky",colors:[rgb(0x6e8ff2)],blobs:[b(0x8fe0f4,0.05,0.05,0.55),b(0x8e7cf0,0,1,0.6),b(0x4d7bf0,1,0.5,0.6)]),
+        .init(name:"Lagoon",colors:[rgb(0x2fb5d4)],blobs:[b(0x6fe9e2,0.55,0.4,0.6),b(0x2c9fd0,0,1,0.6)]),
+        .init(name:"Ice",colors:[rgb(0xeef0fa)],blobs:[b(0xaebdf2,0,1,0.7),b(0xd8d0f4,1,0.8,0.5)]),
+        .init(name:"Dusk",colors:[rgb(0x23264f)],blobs:[b(0x7d4bd8,0,1,0.7),b(0xf2795a,1,0,0.7)]),
+        .init(name:"Mint",colors:[rgb(0xc9f2df)],blobs:[b(0x5fd3b0,0,0,0.7),b(0xf4f7c6,1,1,0.6)])
     ]
-    static let solids: [ODBackgroundStyle] = zip(["White","Yellow","Lime","Green","Teal","Cyan","Blue","Charcoal","Purple"], [UInt32(0xf5f5f1),0xf2c53a,0x94ce34,0x429768,0x258e88,0x48b6c7,0x3a5fce,0x273849,0x7953bc]).map { .init(name:$0.0,colors:[rgb($0.1)]) }
+    static let solids: [ODBackgroundStyle] = zip(["White","Yellow","Lime","Green","Teal","Cyan","Blue","Charcoal","Purple","Pink","Red","Orange","Black"], [UInt32(0xefeeec),0xe8b434,0x8cc63c,0x2f9a5a,0x1f8f80,0x3eb4c8,0x3150d2,0x1f2b3b,0x7a45cc,0xe2559a,0xe0432f,0xf08a24,0x111111]).map { .init(name:$0.0,colors:[rgb($0.1)]) }
 }
 
 enum ODBackgroundRenderer {
@@ -533,10 +622,22 @@ enum ODBackgroundRenderer {
         return context.makeImage()
     }
     static func drawBackdrop(_ style: ODBackgroundStyle, context: CGContext, bounds: CGRect) {
-        if style.colors.count == 1 { context.setFillColor(style.colors[0].cgColor); context.fill(bounds); return }
-        let colors = style.colors.map { $0.cgColor } as CFArray
-        if let gradient = CGGradient(colorsSpace: CGColorSpace(name:CGColorSpace.sRGB), colors:colors, locations:nil) {
-            context.drawLinearGradient(gradient,start:CGPoint(x:bounds.minX,y:bounds.maxY),end:CGPoint(x:bounds.maxX,y:bounds.minY),options:[.drawsBeforeStartLocation,.drawsAfterEndLocation])
+        if style.colors.count == 1 { context.setFillColor(style.colors[0].cgColor); context.fill(bounds) }
+        else {
+            let colors = style.colors.map { $0.cgColor } as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpace(name:CGColorSpace.sRGB), colors:colors, locations:nil) {
+                let start = style.spectrum ? CGPoint(x:bounds.minX,y:bounds.maxY) : CGPoint(x:bounds.midX,y:bounds.maxY)
+                let end = style.spectrum ? CGPoint(x:bounds.maxX,y:bounds.minY) : CGPoint(x:bounds.midX,y:bounds.minY)
+                context.drawLinearGradient(gradient,start:start,end:end,options:[.drawsBeforeStartLocation,.drawsAfterEndLocation])
+            }
+        }
+        let side = max(bounds.width,bounds.height)
+        for blob in style.blobs {
+            let point = CGPoint(x:bounds.minX+bounds.width*blob.x,y:bounds.minY+bounds.height*blob.y)
+            let colors = [blob.color.cgColor,blob.color.withAlphaComponent(0).cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:colors,locations:[0,1]) {
+                context.drawRadialGradient(gradient,startCenter:point,startRadius:0,endCenter:point,endRadius:side*blob.radius,options:[])
+            }
         }
         if style.spectrum {
             for (color, point, radius) in [(ODBackgroundStyle.rgb(0xffdc29),CGPoint(x:bounds.maxX*0.93,y:bounds.maxY*0.92),bounds.width*0.90),(ODBackgroundStyle.rgb(0x6547e5),CGPoint(x:bounds.maxX*0.95,y:bounds.minY),bounds.width*0.75)] {
@@ -564,31 +665,19 @@ private final class ODBackgroundSwatch: NSButton {
     @objc private func invoke() { handler?() }
     override func draw(_ dirtyRect:NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let rect = bounds.insetBy(dx:2,dy:2)
-        context.saveGState(); context.addPath(CGPath(roundedRect:rect,cornerWidth:5,cornerHeight:5,transform:nil)); context.clip()
+        let rect = bounds.insetBy(dx:0.5,dy:0.5)
+        context.saveGState(); context.addPath(CGPath(roundedRect:rect,cornerWidth:6,cornerHeight:6,transform:nil)); context.clip()
+        // The renderer works in y-up image space; buttons are flipped.
+        if isFlipped { context.translateBy(x:0,y:bounds.height); context.scaleBy(x:1,y:-1) }
         ODBackgroundRenderer.drawBackdrop(style,context:context,bounds:rect)
         context.restoreGState()
-        let line = NSBezierPath(roundedRect:rect,xRadius:5,yRadius:5)
-        (selected ? odOrange : NSColor.white.withAlphaComponent(0.22)).setStroke(); line.lineWidth = selected ? 2 : 0.5; line.stroke()
-    }
-}
-
-private final class ODOrangeSliderCell: NSSliderCell {
-    override func drawBar(inside rect: NSRect, flipped: Bool) {
-        let track = CGRect(x:rect.minX,y:rect.midY-1.5,width:rect.width,height:3)
-        NSColor.white.withAlphaComponent(0.58).setFill()
-        NSBezierPath(roundedRect:track,xRadius:1.5,yRadius:1.5).fill()
-        let fraction = (doubleValue-minValue)/max(0.0001,maxValue-minValue)
-        let progress = CGRect(x:track.minX,y:track.minY,width:track.width*CGFloat(fraction),height:track.height)
-        odOrange.setFill()
-        NSBezierPath(roundedRect:progress,xRadius:1.5,yRadius:1.5).fill()
-    }
-    override func drawKnob(_ knobRect: NSRect) {
-        let knob = CGRect(x:knobRect.midX-7,y:knobRect.midY-7,width:14,height:14)
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow(); shadow.shadowOffset = CGSize(width:0,height:-0.5); shadow.shadowBlurRadius = 1.5; shadow.shadowColor = NSColor.black.withAlphaComponent(0.2); shadow.set()
-        NSColor(calibratedWhite:0.97,alpha:1).setFill(); NSBezierPath(ovalIn:knob).fill()
-        NSGraphicsContext.restoreGraphicsState()
+        if selected {
+            let ring = NSBezierPath(roundedRect:bounds.insetBy(dx:0.9,dy:0.9),xRadius:5.5,yRadius:5.5)
+            odOrange.setStroke(); ring.lineWidth = 1.8; ring.stroke()
+        } else {
+            let line = NSBezierPath(roundedRect:rect,xRadius:6,yRadius:6)
+            NSColor.black.withAlphaComponent(0.08).setStroke(); line.lineWidth = 0.5; line.stroke()
+        }
     }
 }
 
@@ -597,23 +686,24 @@ private final class ODSliderRow: ODFlippedView {
     private let valueLabel: NSTextField
     var handler: ((Double) -> Void)?
     var formatter: (Double) -> String
-    init(title: String, y: CGFloat, min: Double = 0, max: Double, value: Double, id: String, formatter: @escaping (Double)->String = { "\(Int($0.rounded())) px" }) {
+    /// `centerY` is the row's vertical centre in the editor surface.
+    init(title: String, centerY: CGFloat, x: CGFloat = 18, width: CGFloat = 384, min: Double = 0, max: Double, value: Double, id: String, formatter: @escaping (Double)->String = { "\(Int($0.rounded())) px" }) {
         slider = NSSlider(value:value,minValue:min,maxValue:max,target:nil,action:nil)
-        slider.cell = ODOrangeSliderCell()
+        slider.cell = ODSliderCell()
         slider.minValue = min; slider.maxValue = max; slider.doubleValue = value
         valueLabel = NSTextField(labelWithString:"")
         self.formatter = formatter
-        super.init(frame:CGRect(x:18,y:y,width:384,height:25))
-        odLabel(title,CGRect(x:0,y:6,width:75,height:16),in:self,size:10,secondary:true)
-        slider.frame = CGRect(x:78,y:2,width:254,height:21)
+        super.init(frame:CGRect(x:x,y:centerY-13,width:width,height:26))
+        odRowLabel(title, x: 0, centerY: 13, width: 70, in: self)
         slider.controlSize = .small
+        slider.frame = CGRect(x:72,y:3,width:width-130,height:20)
         slider.isContinuous = true
         slider.target = self; slider.action = #selector(changed)
         odIdentifier(slider,id)
         addSubview(slider)
-        valueLabel.frame = CGRect(x:330,y:6,width:54,height:15)
-        valueLabel.font = .monospacedDigitSystemFont(ofSize:10,weight:.regular)
-        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.frame = CGRect(x:width-56,y:5.5,width:56,height:15)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize:10.5,weight:.regular)
+        valueLabel.textColor = NSColor.labelColor.withAlphaComponent(0.58)
         valueLabel.alignment = .right
         addSubview(valueLabel)
         updateLabel()
@@ -634,42 +724,53 @@ private final class ODBackgroundController: ODEditorController {
     private var customColor: NSColorWell!
     private var currentRatio: CGFloat?
     private var defaultPadding: Double { 160 }
-    private var defaultCorner: Double { min(184,Double(min(image.width,image.height))/2) }
+    private var defaultCorner: Double { 24 }
+    private var defaultShadow: Double { 24 }
     init(url:URL,image:CGImage) {
         self.image = image
-        super.init(url:url,title:"Add BG",saveTitle:"Save with Background",action:"background")
-        preview.frame = CGRect(x:14,y:51,width:392,height:323)
-        preview.inset = 12
+        super.init(url:url,title:"Add BG",saveTitle:"Save with Background",action:"background",size:CGSize(width:418,height:618))
+        preview.frame = CGRect(x:12,y:52,width:394,height:313)
+        preview.inset = 11
         odIdentifier(preview,"editor.background.preview")
         surface.addSubview(preview)
-        odLabel("Background",CGRect(x:18,y:396,width:77,height:16),in:surface,size:10,secondary:true)
+        odRowLabel("Background",x:16,centerY:395,in:surface)
+        // Two horizontally scrolling rows; the last tile peeks out to show there is more.
         for (row, styles) in [ODBackgroundStyle.gradients,ODBackgroundStyle.solids].enumerated() {
+            let scroll = NSScrollView(frame:CGRect(x:94,y:379.5+CGFloat(row)*34,width:275,height:31))
+            scroll.drawsBackground = false
+            scroll.hasHorizontalScroller = false; scroll.hasVerticalScroller = false
+            scroll.horizontalScrollElasticity = .allowed; scroll.verticalScrollElasticity = .none
+            let strip = ODFlippedView(frame:CGRect(x:0,y:0,width:CGFloat(styles.count)*32+2,height:31))
             for (index, entry) in styles.enumerated() {
-                let swatch = ODBackgroundSwatch(style:entry,frame:CGRect(x:96+CGFloat(index)*30.5,y:388+CGFloat(row)*31,width:28,height:28),id:"editor.background.\(row == 0 ? "gradient" : "solid").\(index)")
+                let swatch = ODBackgroundSwatch(style:entry,frame:CGRect(x:2+CGFloat(index)*32,y:2,width:27,height:27),id:"editor.background.\(row == 0 ? "gradient" : "solid").\(index)")
                 swatch.handler = { [weak self, weak swatch] in
                     guard let self = self else { return }
                     self.style = entry; self.backdrop = nil
                     self.swatches.forEach { $0.selected = $0 === swatch }; self.refresh()
                 }
-                swatches.append(swatch); surface.addSubview(swatch)
+                swatches.append(swatch); strip.addSubview(swatch)
             }
+            scroll.documentView = strip
+            surface.addSubview(scroll)
         }
         swatches.first?.selected = true
-        let photo = ODActionButton("",frame:CGRect(x:371,y:391,width:28,height:24),identifier:"editor.background.customImage") { [weak self] in self?.chooseBackground() }
+        let photo = ODActionButton("",frame:CGRect(x:375,y:381.5,width:27,height:27),identifier:"editor.background.customImage") { [weak self] in self?.chooseBackground() }
         photo.image = NSImage(systemSymbolName:"photo.badge.plus",accessibilityDescription:"Choose background image")
-        photo.imagePosition = .imageOnly
+        photo.setAccessibilityLabel("Choose background image")
         surface.addSubview(photo)
-        customColor = NSColorWell(frame:CGRect(x:373,y:424,width:24,height:18))
-        customColor.color = ODBackgroundStyle.rgb(0x3264bc)
+        customColor = NSColorWell(frame:CGRect(x:373,y:421,width:32,height:16))
+        customColor.colorWellStyle = .minimal
+        customColor.color = ODBackgroundStyle.rgb(0x2f5fc8)
         customColor.target = self; customColor.action = #selector(colorChanged)
         odIdentifier(customColor,"editor.background.customColor")
         surface.addSubview(customColor)
-        padding = ODSliderRow(title:"Padding",y:459,max:max(320,Double(max(image.width,image.height))*0.65),value:defaultPadding,id:"editor.background.padding")
-        corner = ODSliderRow(title:"Corners",y:486,max:Double(min(image.width,image.height))/2,value:defaultCorner,id:"editor.background.corners")
-        shadow = ODSliderRow(title:"Shadow",y:513,max:120,value:24,id:"editor.background.shadow")
+        let long = Double(max(image.width,image.height))
+        padding = ODSliderRow(title:"Padding",centerY:462,x:16,width:386,max:max(400,long*0.625),value:defaultPadding,id:"editor.background.padding")
+        corner = ODSliderRow(title:"Corners",centerY:488,x:16,width:386,max:max(100,long*0.24),value:defaultCorner,id:"editor.background.corners")
+        shadow = ODSliderRow(title:"Shadow",centerY:514,x:16,width:386,max:160,value:defaultShadow,id:"editor.background.shadow")
         for row in [padding!,corner!,shadow!] { row.handler = { [weak self] _ in self?.refresh() }; surface.addSubview(row) }
-        odLabel("Ratio",CGRect(x:18,y:552,width:58,height:16),in:surface,size:10,secondary:true)
-        ratioControl = ODRatioControl(labels:["Auto","1:1","16:9","4:5"],frame:CGRect(x:225,y:546,width:177,height:24),id:"editor.background.ratio") { [weak self] index in
+        odRowLabel("Ratio",x:16,centerY:542,in:surface)
+        ratioControl = ODRatioControl(labels:["Auto","1:1","16:9","4:5"],frame:CGRect(x:231,y:532,width:172,height:20),id:"editor.background.ratio") { [weak self] index in
             self?.currentRatio = [nil,CGFloat(1),CGFloat(16.0/9),CGFloat(4.0/5)][index]
             self?.refresh()
         }
@@ -697,7 +798,7 @@ private final class ODBackgroundController: ODEditorController {
     override func resetEditor() {
         style = ODBackgroundStyle.gradients[0]; backdrop = nil
         swatches.forEach { $0.selected = false }; swatches.first?.selected = true
-        padding.value = defaultPadding; corner.value = defaultCorner; shadow.value = 24
+        padding.value = defaultPadding; corner.value = defaultCorner; shadow.value = defaultShadow
         currentRatio = nil; ratioControl.selectedSegment = 0; refresh()
     }
     override func saveEditor() { saveImage(render(),suffix:" With Background") }
@@ -713,9 +814,9 @@ private final class ODAdjustmentController: ODEditorController {
         super.init(url:url,title:"Edit Image",saveTitle:"Save",action:"edit")
         preview.frame = CGRect(x:16,y:53,width:388,height:344)
         odIdentifier(preview,"editor.edit.preview"); surface.addSubview(preview)
-        brightness = ODSliderRow(title:"Brightness",y:413,min:-1,max:1,value:0,id:"editor.edit.brightness",formatter:{ String(format:"%+.0f%%",$0*100) })
-        contrast = ODSliderRow(title:"Contrast",y:446,min:0,max:2,value:1,id:"editor.edit.contrast",formatter:{ String(format:"%.0f%%",$0*100) })
-        saturation = ODSliderRow(title:"Saturation",y:479,min:0,max:2,value:1,id:"editor.edit.saturation",formatter:{ String(format:"%.0f%%",$0*100) })
+        brightness = ODSliderRow(title:"Brightness",centerY:425.5,min:-1,max:1,value:0,id:"editor.edit.brightness",formatter:{ String(format:"%+.0f%%",$0*100) })
+        contrast = ODSliderRow(title:"Contrast",centerY:458.5,min:0,max:2,value:1,id:"editor.edit.contrast",formatter:{ String(format:"%.0f%%",$0*100) })
+        saturation = ODSliderRow(title:"Saturation",centerY:491.5,min:0,max:2,value:1,id:"editor.edit.saturation",formatter:{ String(format:"%.0f%%",$0*100) })
         for row in [brightness!,contrast!,saturation!] { row.handler = { [weak self] _ in self?.refresh() }; surface.addSubview(row) }
         let rotate = ODActionButton("↻  Rotate 90°",frame:CGRect(x:94,y:530,width:112,height:25),identifier:"editor.edit.rotate") { [weak self] in guard let self = self else { return }; self.quarterTurns = (self.quarterTurns+1)%4; self.refresh() }
         let flip = ODActionButton("↔  Flip",frame:CGRect(x:218,y:530,width:106,height:25),identifier:"editor.edit.flip") { [weak self] in self?.flipped.toggle(); self?.refresh() }
@@ -759,7 +860,7 @@ private final class ODMarkupController: ODEditorController {
         } else {
             let tools = ODRatioControl(labels:["Pen","Rectangle","Arrow","Text"],frame:CGRect(x:30,y:430,width:360,height:27),id:"editor.annotate.tool") { [weak self] index in self?.canvas.tool = [.pen,.rectangle,.arrow,.text][index] }
             surface.addSubview(tools); toolControl = tools
-            stroke = ODSliderRow(title:"Stroke",y:465,min:1,max:40,value:6,id:"editor.annotate.stroke")
+            stroke = ODSliderRow(title:"Stroke",centerY:477.5,min:1,max:40,value:6,id:"editor.annotate.stroke")
             stroke.handler = { [weak self] value in self?.canvas.strokeWidth = CGFloat(value) }
             canvas.strokeWidth = 6; surface.addSubview(stroke)
             color = NSColorWell(frame:CGRect(x:24,y:504,width:35,height:25))
@@ -798,7 +899,7 @@ private final class ODCompressionController: ODEditorController {
         odLabel(url.lastPathComponent,CGRect(x:24,y:429,width:372,height:20),in:surface,size:12,weight:.medium)
         let bytes = (try? url.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0
         odLabel("Original: \(ByteCountFormatter.string(fromByteCount:Int64(bytes),countStyle:.file))",CGRect(x:24,y:456,width:372,height:18),in:surface,size:11,secondary:true)
-        quality = ODSliderRow(title:"Quality",y:493,min:0.1,max:1,value:0.8,id:"editor.compress.quality",formatter:{ "\(Int(($0*100).rounded()))%" })
+        quality = ODSliderRow(title:"Quality",centerY:505.5,min:0.1,max:1,value:0.8,id:"editor.compress.quality",formatter:{ "\(Int(($0*100).rounded()))%" })
         surface.addSubview(quality)
         let note = odLabel("Lower quality makes a smaller file. A new copy is saved beside the original.",CGRect(x:24,y:537,width:372,height:32),in:surface,size:10,secondary:true); note.maximumNumberOfLines = 2
     }
