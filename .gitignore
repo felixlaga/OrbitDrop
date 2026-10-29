@@ -1,0 +1,23 @@
+# Build outputs, local QA evidence, and the supplied reference recording.
+/build/
+/dist/
+/reference/
+.DS_Store
+__pycache__/
+*.pyc
+
+# Keep codec recipes and verification reports; retain downloaded sources and
+# compiler intermediates locally without adding them to the application repo.
+/tools/codecs/*
+!/tools/codecs/webp/
+!/tools/codecs/avif/
+/tools/codecs/webp/*
+!/tools/codecs/webp/*.sh
+!/tools/codecs/webp/*.py
+!/tools/codecs/webp/*.md
+!/tools/codecs/webp/*.json
+/tools/codecs/avif/*
+!/tools/codecs/avif/*.sh
+!/tools/codecs/avif/*.py
+!/tools/codecs/avif/*.md
+!/tools/codecs/avif/*.json

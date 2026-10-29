@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "method": "Two clean source builds in distinct codec-local build directories using the same Clang and SDK",
+  "build_directories": [
+    "build.1Hfmeq",
+    "build.RwyWxU"
+  ],
+  "cwebp_sha256": "24b0f3284fffaee42783bd70edf30549e63473c76347190b811c1989f028dd52",
+  "cwebp_size_bytes": 624560,
+  "bit_identical": true
+}

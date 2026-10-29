@@ -1,0 +1,143 @@
+{
+  "host": "26.6.2",
+  "version": "1.6.0\nlibsharpyuv: 0.4.2",
+  "binary": "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/Resources/Codecs/webp/cwebp",
+  "sha256": "24b0f3284fffaee42783bd70edf30549e63473c76347190b811c1989f028dd52",
+  "size_bytes": 624560,
+  "architectures": "arm64",
+  "runtime_dependencies": "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/Resources/Codecs/webp/cwebp:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)\n\t/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)\n",
+  "environment": {
+    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    "TMPDIR": "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification"
+  },
+  "source_dimensions": [
+    96,
+    64
+  ],
+  "cases": [
+    {
+      "name": "lossless-bundled",
+      "encode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/Resources/Codecs/webp/cwebp",
+        "-quiet",
+        "-lossless",
+        "-z",
+        "6",
+        "-exact",
+        "-mt",
+        "-metadata",
+        "none",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/input with alpha.png",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-bundled.webp"
+      ],
+      "decode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/bin/dwebp",
+        "-quiet",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-bundled.webp",
+        "-pam",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-bundled.pam"
+      ],
+      "webp_signature_hex": "524946466e00000057454250",
+      "size_bytes": 118,
+      "sha256": "c41c2c110304415447f3bba95b08c203a328b055efa10dab0bbadbd4866745b1",
+      "decode": "96x64 RGBA; alpha exact",
+      "all_pixels_exact": true
+    },
+    {
+      "name": "lossless-relocated",
+      "encode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/Moved App with spaces.app/Contents/Resources/Codecs/webp/cwebp",
+        "-quiet",
+        "-lossless",
+        "-z",
+        "6",
+        "-exact",
+        "-mt",
+        "-metadata",
+        "none",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/input with alpha.png",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-relocated.webp"
+      ],
+      "decode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/bin/dwebp",
+        "-quiet",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-relocated.webp",
+        "-pam",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossless-relocated.pam"
+      ],
+      "webp_signature_hex": "524946466e00000057454250",
+      "size_bytes": 118,
+      "sha256": "c41c2c110304415447f3bba95b08c203a328b055efa10dab0bbadbd4866745b1",
+      "decode": "96x64 RGBA; alpha exact",
+      "all_pixels_exact": true
+    },
+    {
+      "name": "lossy-relocated",
+      "encode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/Moved App with spaces.app/Contents/Resources/Codecs/webp/cwebp",
+        "-quiet",
+        "-q",
+        "82",
+        "-m",
+        "6",
+        "-mt",
+        "-metadata",
+        "none",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/input with alpha.png",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossy-relocated.webp"
+      ],
+      "decode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/bin/dwebp",
+        "-quiet",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossy-relocated.webp",
+        "-pam",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/lossy-relocated.pam"
+      ],
+      "webp_signature_hex": "524946469e08000057454250",
+      "size_bytes": 2214,
+      "sha256": "c9b3297dd63189d7397ecf74c0bc5ff503805e8d869c039bb6437c14eb061f25",
+      "decode": "96x64 RGBA; alpha exact",
+      "all_pixels_exact": false
+    },
+    {
+      "name": "near-lossless-relocated",
+      "encode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/Moved App with spaces.app/Contents/Resources/Codecs/webp/cwebp",
+        "-quiet",
+        "-near_lossless",
+        "60",
+        "-m",
+        "6",
+        "-mt",
+        "-metadata",
+        "none",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/input with alpha.png",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/near-lossless-relocated.webp"
+      ],
+      "decode_argv": [
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/bin/dwebp",
+        "-quiet",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/near-lossless-relocated.webp",
+        "-pam",
+        "-o",
+        "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/near-lossless-relocated.pam"
+      ],
+      "webp_signature_hex": "524946465407000057454250",
+      "size_bytes": 1884,
+      "sha256": "f27869c48d7259070b1936027a2118d0f31615881816444ca965e834f9478574",
+      "decode": "96x64 RGBA; alpha exact",
+      "all_pixels_exact": false
+    }
+  ],
+  "minimum_macos": "13.0",
+  "relocated_dyld_log_file": "/Users/felix/.t3/scratch/2026-10-29-screenrecording-10-29-2026-12-3a923405/tools/codecs/webp/verification/relocated-dyld.log",
+  "relocated_dyld_homebrew_references": false,
+  "result": "PASS"
+}

@@ -1,0 +1,68 @@
+{
+  "built": "2026-10-29",
+  "host": "macOS 26.6.2 arm64",
+  "deploymentTarget": "macOS 13.0",
+  "architecture": "arm64",
+  "tool": "avifenc",
+  "version": "1.4.2",
+  "codec": "aom 3.14.1 (encoding only)",
+  "runtimeDependencies": [
+    "/usr/lib/libSystem.B.dylib"
+  ],
+  "signature": "ad-hoc",
+  "binaryBytes": 7295968,
+  "binarySHA256": "6c0d6d10f4834409d3821ef14fbbbbe4eadbfe5cc1d288e00c7728ee2f18d6ce",
+  "sourceArchive": {
+    "url": "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v1.4.2.tar.gz",
+    "sha256": "2b645287340ba5a631d268b551dc2d72bd73ac33335962dd36dcdb6d8366921d"
+  },
+  "staticDependencies": [
+    {
+      "name": "aom",
+      "version": "3.14.1",
+      "git": "https://aomedia.googlesource.com/aom.git",
+      "commit": "03087864cf4bea6abb0d28f95cf7843511413d8f"
+    },
+    {
+      "name": "libpng",
+      "version": "1.6.58",
+      "git": "https://github.com/pnggroup/libpng.git",
+      "commit": "3061454d980de7d53608f594194cfac722721d2a"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2",
+      "git": "https://github.com/madler/zlib.git",
+      "commit": "da607da739fa6047df13e66a2af6b8bec7c2a498"
+    },
+    {
+      "name": "libjpeg-turbo",
+      "version": "3.1.4.1",
+      "git": "https://github.com/libjpeg-turbo/libjpeg-turbo.git",
+      "commit": "9217719d3a58633923b096af4c1d50d304768a64"
+    }
+  ],
+  "buildOnlyDependencies": [
+    {
+      "name": "CMake",
+      "version": "4.0.3",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-macos-universal.tar.gz",
+      "sha256": "4e85de4daf1c3e82d7dc6b8ba5683972944b466343aeb9c327a742437bb3ce9a"
+    },
+    {
+      "name": "libargparse",
+      "git": "https://github.com/kmurray/libargparse.git",
+      "commit": "ee74d1b53bd680748af14e737378de57e2a0a954",
+      "note": "Fetched by upstream CMake, not linked into avifenc"
+    }
+  ],
+  "signingIdentifier": "avifenc",
+  "validation": {
+    "runtimeHost": "macOS 26.6.2 arm64",
+    "minimumOSMetadata": "13.0",
+    "libaomObjectMinOS": "all 278 audited objects:13.0",
+    "libjpegObjectMinOS": "all 116 audited objects:13.0",
+    "probe": "tools/codecs/probes/codec-report.json",
+    "macOS13RuntimeTested": false
+  }
+}

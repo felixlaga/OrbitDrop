@@ -1,0 +1,16 @@
+OrbitDrop
+
+1. Drag OrbitDrop into Applications.
+2. Open it from Applications. Look for the circular menu-bar icon.
+3. Drag an image or PDF in Finder, then drop it on the wheel.
+
+Hold Option while dragging for Crop, Add BG, and other tools.
+Click the center to switch wheels when opening a file from the menu.
+Drag the center to move the wheel. Escape dismisses it.
+
+Files are processed on your Mac. Originals are preserved.
+OrbitDrop has no Dock icon. Quit it from its menu-bar menu.
+
+Apple Silicon, macOS 13 or later.
+This personal build is locally signed, not Apple-notarized. If macOS
+blocks it, use its Open Anyway option in Privacy & Security.
