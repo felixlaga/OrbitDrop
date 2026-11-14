@@ -134,7 +134,10 @@ enum VideoEngine {
             progress(Double(index + 1) / Double(count))
         }
         guard CGImageDestinationFinalize(destination) else { throw MediaEngine.Failure.encoding("GIF encoding failed.") }
-        try (data as Data).write(to: output, options: .withoutOverwriting)
+        // ImageIO labels the file GIF87a, but the frame delays and looping need GIF89a, so fix the label.
+        var bytes = data as Data
+        if bytes.starts(with: Data("GIF87a".utf8)) { bytes.replaceSubrange(3..<6, with: Data("89a".utf8)) }
+        try bytes.write(to: output, options: .withoutOverwriting)
     }
 
     private final class Outcome<T>: @unchecked Sendable { var result: Result<T, Error>? }
