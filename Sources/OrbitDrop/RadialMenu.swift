@@ -15,8 +15,31 @@ struct WheelAction {
     ]
     static func formats(for url: URL?) -> [WheelAction] {
         let ext = url?.pathExtension.lowercased() ?? "png"
-        let formats = ext == "pdf" ? ["DOCX", "JPG", "PNG", "TXT"] : ["PNG", "WEBP", "HEIC", "TIFF", "AVIF", "BMP", "PDF", "DOCX"]
+        let formats: [String]
+        if VideoEngine.inputExtensions.contains(ext) { formats = VideoEngine.outputFormats.map { $0.uppercased() } }
+        else if ext == "pdf" { formats = ["DOCX", "JPG", "PNG", "TXT"] }
+        else { formats = ["PNG", "WEBP", "HEIC", "TIFF", "AVIF", "BMP", "PDF", "DOCX"] }
         return formats.map { .init(label: $0, symbol: nil, key: $0.lowercased()) }
+    }
+
+    /// Files the wheel opens for by itself, on a hold or a paused drag.
+    static let supportedExtensions: Set<String> = Set(["png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff",
+                                                       "avif", "bmp", "gif", "pdf"]).union(VideoEngine.inputExtensions)
+    /// The tools edit one still image, so videos only get the formats wheel.
+    static func hasTools(for url: URL?) -> Bool { !(url.map(VideoEngine.isVideo) ?? false) }
+    /// One wheel shows one set of formats, so videos never share it with images or PDFs.
+    static func mixesVideo(_ urls: [URL]) -> Bool {
+        let videos = urls.filter(VideoEngine.isVideo).count
+        return videos > 0 && videos < urls.count
+    }
+    static func canOpen(_ urls: [URL]) -> Bool {
+        !urls.isEmpty && urls.allSatisfy { supportedExtensions.contains($0.pathExtension.lowercased()) } && !mixesVideo(urls)
+    }
+    /// Keeps the files of the same kind as the first one: all videos, or no videos.
+    static func sameKind(_ urls: [URL]) -> [URL] {
+        guard let first = urls.first else { return [] }
+        let video = VideoEngine.isVideo(first)
+        return urls.filter { VideoEngine.isVideo($0) == video }
     }
 }
 
@@ -144,7 +167,8 @@ final class RadialMenu: NSView {
     private func updateDrag(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard busyLabel == nil else { return [] }
         let urls = Self.urls(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return [] }
+        guard !urls.isEmpty, !WheelAction.mixesVideo(urls) else { hovered = nil; return [] }
+        if isTools && !WheelAction.hasTools(for: urls.first) { hovered = nil; return [] }
         if provisionalFiles != urls {
             provisionalFiles = urls
             if !isTools {

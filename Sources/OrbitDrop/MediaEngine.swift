@@ -9,7 +9,7 @@ import Darwin
 enum MediaEngine {
     enum Failure: LocalizedError {
         case unsupported(String), unreadable(String), encoding(String), exists(String)
-        case noText, invalidQuality, tooLarge, lockedPDF, noReduction
+        case noText, invalidQuality, tooLarge, lockedPDF, noReduction, cancelled
         var errorDescription: String? {
             switch self {
             case .unsupported(let message): return message
@@ -21,6 +21,7 @@ enum MediaEngine {
             case .tooLarge: return "This file is too large to process safely at full resolution."
             case .lockedPDF: return "Unlock the PDF before converting it."
             case .noReduction: return "This file could not be made smaller with these settings. The original was kept."
+            case .cancelled: return "The conversion was cancelled. Nothing was saved."
             }
         }
     }
@@ -214,9 +215,12 @@ enum MediaEngine {
         throw Failure.encoding("Too many simultaneous writes to this folder.")
     }
 
-    static func convert(_ url: URL, to format: String) throws -> [URL] {
-        let format = try normalized(format)
-        if !isPDF(url) && !isText(url) { try requireSingleFrame(url) }
+    /// `progress` and `isCancelled` apply to videos, the only conversions long enough to need them.
+    static func convert(_ url: URL, to format: String, progress: ((Double) -> Void)? = nil,
+                        isCancelled: @escaping () -> Bool = { false }) throws -> [URL] {
+        let video = VideoEngine.isVideo(url)
+        let format = try video ? VideoEngine.normalized(format) : normalized(format)
+        if !video && !isPDF(url) && !isText(url) { try requireSingleFrame(url) }
         let staging = url.deletingLastPathComponent().appendingPathComponent(".orbitdrop-batch-\(UUID().uuidString)")
         try fm.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: staging) }
@@ -235,7 +239,11 @@ enum MediaEngine {
             }
         }
         var outputs: [URL] = []
-        if types[format] != nil && (isPDF(url) || isText(url)) {
+        if video {
+            let file = staging.appendingPathComponent("0.\(format)")
+            try VideoEngine.export(url, to: format, output: file, progress: progress ?? { _ in }, isCancelled: isCancelled)
+            records.append((file, ""))
+        } else if types[format] != nil && (isPDF(url) || isText(url)) {
             if isPDF(url) { try stagePages(pdf(url)) }
             else {
                 guard let document = PDFDocument(data: try textPDF(extractText(url))) else { throw Failure.encoding("Text layout failed") }
