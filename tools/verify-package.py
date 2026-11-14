@@ -51,7 +51,22 @@ assert jpg.name == 'Single Page.jpg', jpg.name
 again = convert(pdf, 'jpg')[0]
 assert again != jpg and jpg.exists()
 assert source.read_bytes() == original
+# test.sh leaves the H.264 + AAC clip that VideoEngineTests made; convert it with the packaged app too.
+videos = []
+clip_fixture = root / 'build' / 'tests' / 'Sample-video.mov'
+if clip_fixture.is_file():
+    clip = workspace / 'Screen Recording 日本.mov'
+    shutil.copy(clip_fixture, clip)
+    clip_bytes = clip.read_bytes()
+    for fmt in ('mp4', 'mov', 'gif', 'm4a'):
+        out = convert(clip, fmt)[0]
+        data = out.read_bytes()
+        if fmt in ('mp4', 'm4a'): assert data[4:8] == b'ftyp', fmt
+        if fmt == 'gif': assert data.startswith(b'GIF89a'), data[:8]
+        assert out.suffix == '.' + fmt and out.parent == clip.parent, out
+        videos.append({'format':fmt,'bytes':len(data),'file':out.name,'passed':True})
+    assert clip.read_bytes() == clip_bytes
 subprocess.run(['/usr/bin/codesign','--verify','--deep','--strict',str(app)],check=True,capture_output=True)
-report = {'passed':True,'windowOpened':False,'environmentPATH':env['PATH'],'relocatedBundle':str(app),'formats':reports,'singlePageName':jpg.name,'nonOverwriteName':again.name,'originalUnchanged':True}
+report = {'passed':True,'windowOpened':False,'environmentPATH':env['PATH'],'relocatedBundle':str(app),'formats':reports,'videoFormats':videos or 'skipped: run test.sh first','singlePageName':jpg.name,'nonOverwriteName':again.name,'originalUnchanged':True}
 (output_root / 'report.json').write_text(json.dumps(report,indent=2))
 print(json.dumps(report,indent=2))

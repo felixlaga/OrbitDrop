@@ -10,13 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var editor = EditorCoordinator()
     var timer: Timer?
     var currentFiles: [URL] = []
-    var pendingDragFiles: [URL] = []
     var showingTools = false
-    var dragStart: CFAbsoluteTime?
-    var initialDragPoint = NSPoint.zero
     var lastDragChange = -1
-    var dragWasShown = false
+    /// Set once the drag pasteboard of the current press has been read.
+    var dragChecked = false
     var dragSession = false
+    /// The wheel opened on a still hold and the button is still down.
+    var holdSession = false
+    var hold = HoldGesture()
     var wasDown = false
     var hideAfterDrag: CFAbsoluteTime?
     var localMonitor: Any?
@@ -26,10 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var working = false
     var testing = false
     var optionWasDown = false
-    var restPoint = NSPoint.zero
-    var restSince: CFAbsoluteTime = 0
-    /// How long the pointer must rest during a drag before the wheel opens.
-    let restDelay: CFAbsoluteTime = 0.3
     var toast: ProgressToast?
     var cancelConversion = false
 
@@ -54,6 +51,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showIntroduction()
             UserDefaults.standard.set(true,forKey:"hasOpenedOrbitDrop")
         }
+        askForFinderAccessOnce()
+    }
+    var holdEnabled: Bool { UserDefaults.standard.object(forKey:"automaticDrag") as? Bool != false }
+    /// The hold needs Finder's selection. Ask once at launch, so the prompt never lands in the middle of a hold.
+    func askForFinderAccessOnce() {
+        guard !testing, !CommandLine.arguments.contains("--open"), holdEnabled,
+              !UserDefaults.standard.bool(forKey:"askedFinderAccess"), FinderAccess.status() == .notAsked else { return }
+        UserDefaults.standard.set(true,forKey:"askedFinderAccess")
+        DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+1) { _ = FinderAccess.status(ask:true) }
+    }
+    @objc func allowFinderAccess() {
+        DispatchQueue.global(qos:.userInitiated).async {
+            let status = FinderAccess.status(ask:true)
+            DispatchQueue.main.async { if status != .allowed { self.explainFinderAccess() } }
+        }
+    }
+    func explainFinderAccess() {
+        NSApp.activate(ignoringOtherApps:true)
+        let alert = NSAlert()
+        alert.messageText = "Let OrbitDrop see your Finder selection"
+        alert.informativeText = "A 2-second hold on a file needs this, so OrbitDrop knows which file you're holding. Open Privacy & Security → Automation, then turn on Finder under OrbitDrop.\n\nDragging a file and pausing works without it."
+        alert.addButton(withTitle:"Open System Settings"); alert.addButton(withTitle:"Not Now")
+        if alert.runModal() == .alertFirstButtonReturn { FinderAccess.openAutomationSettings() }
     }
     func buildWheel() {
         let size = WheelGeometry.panelSize
@@ -91,8 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         item("Open File…",#selector(chooseFile),menu,"o")
         item("Show Wheel",#selector(showCurrentWheel),menu,"")
-        let auto = item("Show When Dragging Files",#selector(toggleAutomatic(_:)),menu,"")
-        auto.state = UserDefaults.standard.object(forKey:"automaticDrag") as? Bool == false ? .off : .on
+        let auto = item("Open on 2-Second Hold",#selector(toggleAutomatic(_:)),menu,"")
+        auto.state = holdEnabled ? .on : .off
+        if holdEnabled && FinderAccess.status() != .allowed { item("Allow Finder Access…",#selector(allowFinderAccess),menu,"") }
         item("How to Use…",#selector(showIntroduction),menu,"")
         if #available(macOS 13.0,*) {
             let login = item("Open at Login",#selector(toggleLogin),menu,"")
@@ -116,9 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func chooseFile() {
         hideWheel(); NSApp.activate(ignoringOtherApps:true)
         let picker = NSOpenPanel(); picker.canChooseDirectories = false; picker.allowsMultipleSelection = true
-        picker.allowedContentTypes = [.image,.pdf]; picker.message = "Choose a file to convert or edit."
+        picker.allowedContentTypes = [.image,.pdf,.quickTimeMovie,.mpeg4Movie] + [UTType("com.apple.m4v-video")].compactMap { $0 }
+        picker.message = "Choose a file to convert or edit."
         picker.begin { [weak self] result in
-            guard result == .OK,let self else { return }; self.currentFiles = picker.urls
+            guard result == .OK,let self else { return }
+            let files = WheelAction.sameKind(picker.urls)
+            guard !files.isEmpty else { return }; self.currentFiles = files
             self.showWheel(at:NSEvent.mouseLocation,tools:false,dragging:false)
         }
     }
@@ -130,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !working else { return }
         hideAfterDrag = nil
         let displayedFiles = files ?? currentFiles
+        let tools = tools && WheelAction.hasTools(for:displayedFiles.first)
         showingTools = tools
         wheel.files = displayedFiles; wheel.file = displayedFiles.first
         wheel.isTools = tools; wheel.actions = tools ? WheelAction.tools : WheelAction.formats(for:displayedFiles.first)
@@ -163,51 +188,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSAnimationContext.runAnimationGroup { $0.duration = 0.1; self?.wheel.animator().labelAlpha = 1 }
         }
     }
-    func hideWheel() { panel.orderOut(nil); panel.alphaValue = 1; wheel.labelAlpha = 1; wheel.hovered = nil; hideAfterDrag = nil; dragSession = false }
+    func hideWheel() { panel.orderOut(nil); panel.alphaValue = 1; wheel.labelAlpha = 1; wheel.hovered = nil; hideAfterDrag = nil; dragSession = false; holdSession = false }
     func toggleMode() { setToolMode(!showingTools) }
     func setToolMode(_ tools:Bool) {
-        guard showingTools != tools else { return }
+        guard showingTools != tools, !tools || WheelAction.hasTools(for:wheel.file) else { return }
         showingTools = tools; wheel.isTools = showingTools
         wheel.actions = showingTools ? WheelAction.tools : WheelAction.formats(for:wheel.file)
-        if dragSession { wheel.hovered = wheel.index(at:wheel.convert(panel.convertPoint(fromScreen:NSEvent.mouseLocation),from:nil)) }
+        if dragSession || holdSession { wheel.hovered = wheel.index(at:wheel.convert(panel.convertPoint(fromScreen:NSEvent.mouseLocation),from:nil)) }
     }
+    /// Polls the mouse. One rule opens the wheel: hold the button on a file and keep the pointer
+    /// still for 2 seconds, whether or not the file is being dragged (see `HoldGesture`).
     func tick() {
         guard !testing else { return }
         let down = NSEvent.pressedMouseButtons & 1 != 0
         let option = NSEvent.modifierFlags.contains(.option)
         let now = CFAbsoluteTimeGetCurrent()
-        // Each press of Option flips between formats and tools while dragging.
-        if panel.isVisible, down, dragSession, option, !optionWasDown { toggleMode() }
+        let point = NSEvent.mouseLocation
+        // Each press of Option flips between formats and tools while the button is held.
+        if panel.isVisible, down, dragSession || holdSession, option, !optionWasDown { toggleMode() }
         optionWasDown = option
-        if down && !wasDown {
-            dragStart = nil; pendingDragFiles = []; initialDragPoint = NSEvent.mouseLocation; dragWasShown = false
-        }
-        if down && !working && UserDefaults.standard.object(forKey:"automaticDrag") as? Bool != false {
+        if down && !wasDown { dragChecked = false }
+        var dragFiles: [URL]?
+        if down {
             let board = NSPasteboard(name:.drag)
-            let changed = board.changeCount != lastDragChange
-            if changed && dragStart == nil {
-                let urls = RadialMenu.urls(from:board)
-                if !urls.isEmpty && urls.allSatisfy({ supported($0) }) {
-                    dragStart = now; pendingDragFiles = urls
-                    restPoint = NSEvent.mouseLocation; restSince = now
-                }
-            }
-            // A drag that keeps moving passes through untouched; the wheel opens
-            // only once the pointer has rested in one spot for a moment.
-            if dragStart != nil, !dragWasShown {
-                let point = NSEvent.mouseLocation
-                if hypot(point.x-restPoint.x,point.y-restPoint.y) > 4 { restPoint = point; restSince = now }
-                else if now-restSince >= restDelay {
-                    showWheel(at:point,tools:false,dragging:true,files:pendingDragFiles); dragWasShown = true
+            if board.changeCount != lastDragChange {
+                // The held file is now being dragged, so letting go ends it like any drag.
+                if holdSession { dragSession = true }
+                if !dragChecked {
+                    let urls = RadialMenu.urls(from:board)
+                    if !urls.isEmpty { dragChecked = true; if WheelAction.canOpen(urls) { dragFiles = urls } }
                 }
             }
         }
-        if !down && wasDown && dragSession { hideAfterDrag = now+0.22 }
+        let signal = hold.update(down:down,point:point,now:now,drag:dragFiles)
+        if !working && holdEnabled {
+            switch signal {
+            case .openDrag(let files): showWheel(at:point,tools:false,dragging:true,files:files)
+            case .askFinder: openForHeldFile(at:point)
+            case .none: break
+            }
+        }
+        if !down && wasDown {
+            if dragSession { hideAfterDrag = now+0.22 }
+            else if holdSession { settleHeldWheel() }
+        }
         if let deadline = hideAfterDrag,now>deadline { hideWheel() }
         if !down { lastDragChange = NSPasteboard(name:.drag).changeCount }
         wasDown = down
     }
-    func supported(_ url:URL)->Bool { ["png","jpg","jpeg","heic","heif","webp","tif","tiff","avif","bmp","gif","pdf"].contains(url.pathExtension.lowercased()) }
+    /// A still 2-second press. The press selected the file in Finder, so Finder's selection is the held file.
+    func openForHeldFile(at point:NSPoint) {
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == FinderAccess.bundleIdentifier,
+              !NSApp.windows.contains(where:{ $0.isVisible && $0.frame.contains(point) }),
+              FinderAccess.status() == .allowed,
+              let files = FinderAccess.selectedFiles(), WheelAction.canOpen(files) else { return }
+        // Don't activate yet: Finder still owns the press, and sliding off now starts a normal drag onto the wheel.
+        showWheel(at:point,tools:false,dragging:true,files:files)
+        dragSession = false; holdSession = true
+        hold.markOpened()
+    }
+    /// Letting go of a held file leaves the wheel open for a click, like the wheel from the menu.
+    func settleHeldWheel() {
+        holdSession = false
+        guard panel.isVisible else { return }
+        panel.hidesOnDeactivate = true
+        NSApp.activate(ignoringOtherApps:true); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(wheel)
+    }
+    func supported(_ url:URL)->Bool { WheelAction.supportedExtensions.contains(url.pathExtension.lowercased()) }
     func perform(_ action:WheelAction,urls:[URL]) {
         hideAfterDrag = nil
         let point = NSEvent.mouseLocation
@@ -227,7 +274,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var outputs:[URL] = [],failures:[String] = []
             for (index,url) in urls.enumerated() {
                 if self.cancelConversion { break }
-                do { outputs += try MediaEngine.convert(url,to:action.key) }
+                let savedBefore = index-failures.count
+                do {
+                    outputs += try MediaEngine.convert(url,to:action.key,
+                        progress:{ part in DispatchQueue.main.async { toast.update(saved:savedBefore,total:urls.count,partial:part) } },
+                        isCancelled:{ self.cancelConversion })
+                }
+                catch MediaEngine.Failure.cancelled { break }
                 catch { failures.append("\(url.lastPathComponent): \(error.localizedDescription)") }
                 let saved = index+1-failures.count
                 DispatchQueue.main.async { toast.update(saved:saved,total:urls.count) }
@@ -261,17 +314,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func showIntroduction() {
         if let introduction { NSApp.activate(ignoringOtherApps:true); introduction.makeKeyAndOrderFront(nil); return }
-        let window = NSWindow(contentRect:NSRect(x:0,y:0,width:430,height:345),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+        let window = NSWindow(contentRect:NSRect(x:0,y:0,width:430,height:385),styleMask:[.titled,.closable],backing:.buffered,defer:false)
         window.title = "OrbitDrop"; window.isReleasedWhenClosed = false; window.center()
-        let view = NSVisualEffectView(frame:NSRect(x:0,y:0,width:430,height:345)); view.material = .popover; view.state = .active
-        let heading = NSTextField(labelWithString:"Your files. One gesture."); heading.font = .systemFont(ofSize:25,weight:.semibold); heading.frame = NSRect(x:28,y:284,width:374,height:34); view.addSubview(heading)
-        let body = NSTextField(wrappingLabelWithString:"Drag an image or PDF in Finder and hold still for a moment. A wheel appears around your pointer. Drop on a format to convert.\n\nPress ⌥ Option while dragging to switch to Crop, Add BG, and the other tools. Press it again to switch back.\n\nClick the center to switch wheels; drag it to move. Escape dismisses. ⌃⌥Space opens or hides the wheel.\n\nNew files are saved beside the original. OrbitDrop lives in the menu bar, with no Dock icon.")
-        body.font = .systemFont(ofSize:13); body.textColor = .secondaryLabelColor; body.frame = NSRect(x:28,y:61,width:374,height:210); view.addSubview(body)
+        let view = NSVisualEffectView(frame:NSRect(x:0,y:0,width:430,height:385)); view.material = .popover; view.state = .active
+        let heading = NSTextField(labelWithString:"Your files. One gesture."); heading.font = .systemFont(ofSize:25,weight:.semibold); heading.frame = NSRect(x:28,y:324,width:374,height:34); view.addSubview(heading)
+        let body = NSTextField(wrappingLabelWithString:"In Finder, hold the mouse button on an image, PDF or video for 2 seconds. A wheel appears around your pointer. Let go and click a format, or keep holding and slide onto one.\n\nPress ⌥ Option while holding to switch images and PDFs to Crop, Add BG and the other tools. Press it again to switch back.\n\nClick the center to switch wheels; drag it to move. Escape dismisses. ⌃⌥Space opens or hides the wheel.\n\nNew files are saved beside the original. OrbitDrop lives in the menu bar, with no Dock icon.")
+        body.font = .systemFont(ofSize:13); body.textColor = .secondaryLabelColor; body.frame = NSRect(x:28,y:61,width:374,height:250); view.addSubview(body)
         let button = NSButton(title:"Open a File…",target:self,action:#selector(chooseFile)); button.bezelStyle = .rounded; button.keyEquivalent = "\r"; button.frame = NSRect(x:276,y:20,width:128,height:30); view.addSubview(button)
         window.contentView = view; introduction = window; NSApp.activate(ignoringOtherApps:true); window.makeKeyAndOrderFront(nil)
     }
     func application(_ application:NSApplication,open urls:[URL]) {
-        currentFiles = urls.filter { supported($0) }
+        currentFiles = WheelAction.sameKind(urls.filter { supported($0) })
         if !currentFiles.isEmpty { showWheel(at:NSEvent.mouseLocation,tools:false,dragging:false) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool { false }
@@ -292,7 +345,7 @@ if let sourceIndex = CommandLine.arguments.firstIndex(of:"--convert") {
         exit(0)
     } catch { fputs(error.localizedDescription+"\n",stderr); exit(1) }
 }
-if CommandLine.arguments.contains("--version") { print("OrbitDrop 1.1.0"); exit(0) }
+if CommandLine.arguments.contains("--version") { print("OrbitDrop 1.2.0"); exit(0) }
 
 let application = NSApplication.shared
 let delegate = AppDelegate()

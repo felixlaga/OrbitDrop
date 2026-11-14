@@ -1,5 +1,33 @@
 # Build validation
 
+## 1.2.0: video conversion and the 2-second hold
+
+Verified in CI on a GitHub `macos-26` runner (Apple Silicon VM), see `.github/workflows/macos.yml`. No step ran on a local Mac.
+
+### Passed in CI
+
+- `bash test.sh`: every earlier suite still passes, including the 97 media assertions and the editor checks.
+- `HoldGestureTests`: a still press asks Finder at exactly 2 s and only once; letting go early never opens; a press that moved without a drag never asks; a drag opens once it pauses for 2 s; a drag that keeps moving never opens; an open wheel never jumps to a later pause.
+- `RadialMenuTests`: videos get MP4, MOV, GIF and M4A with working hit targets; videos have no tools wheel; images and videos never share a wheel.
+- `VideoEngineTests` (35 assertions, on clips the test makes with AVFoundation):
+  - H.264 + AAC to MP4 copies both tracks and keeps the length. ProRes to MP4 re-encodes to H.264.
+  - MOV keeps picture and sound and never overwrites the original (`Clip 2.mov`).
+  - GIF: about 10 frames a second, small clips keep their size, 1280×720 becomes 640×360, a 32 s clip is refused.
+  - M4A is AAC sound only. A silent clip is refused.
+  - Cancelling before an export and halfway through a GIF saves nothing. No staging folders are left. The original is unchanged.
+- `tools/verify-package.py`: the packaged app converts a clip named `Screen Recording 日本.mov` to MP4, MOV, GIF and M4A from a relocated bundle.
+
+### Not verified
+
+- **The live hold in Finder.** CI can't press a mouse in Finder. The timing rule is tested, but the Finder selection read, the Automation prompt and the hand-off from hold to drag were not run on a real desktop.
+- **Weak spot by design.** With a file already selected, a still 2 s press on a Finder toolbar or sidebar also opens the wheel for that file. Seeing exactly what is under the pointer would need Accessibility permission.
+- HDR and Dolby Vision iPhone clips were not tested. AVFoundation converts them when re-encoding to H.264, but colour accuracy was not checked.
+- Copy-protected M4V files are refused with a message, but no such file was tested.
+- WebM, MKV and AVI are not read. AVFoundation can't open them.
+- ImageIO labels animated GIFs `GIF87a`. OrbitDrop relabels them `GIF89a`, which the frame delays and looping need.
+
+## 1.1.0
+
 Verified on an Apple Silicon Mac running macOS 26.6.2. Deployment target is macOS 13; an older macOS runtime and Intel Mac were not available for testing.
 
 ## Passed

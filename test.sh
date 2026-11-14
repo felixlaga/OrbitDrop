@@ -8,7 +8,7 @@ for SOURCE in Sources/OrbitDrop/*.swift; do
 done
 for TEST in Tests/*Tests.swift; do
   NAME="$(basename "$TEST" .swift)"
-  xcrun swiftc -swift-version 5 "${SOURCES[@]}" "$TEST" -o "build/tests/$NAME" -framework AppKit -framework PDFKit -framework Vision -framework CoreImage -framework UniformTypeIdentifiers
+  xcrun swiftc -swift-version 5 "${SOURCES[@]}" "$TEST" -o "build/tests/$NAME" -framework AppKit -framework PDFKit -framework Vision -framework CoreImage -framework AVFoundation -framework CoreMedia -framework UniformTypeIdentifiers
   "build/tests/$NAME"
 done
 echo "All offline tests passed. No app windows were opened."

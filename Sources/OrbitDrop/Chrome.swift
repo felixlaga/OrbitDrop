@@ -115,9 +115,11 @@ final class ProgressToast: NSObject {
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
     }
 
-    func update(saved: Int, total: Int) {
+    /// `partial` is how far the file in progress has got, 0...1. Only videos report it.
+    func update(saved: Int, total: Int, partial: Double = 0) {
         detail.stringValue = "\(saved) of \(total) saved"
-        bar.fraction = total == 0 ? 0 : CGFloat(saved)/CGFloat(total)
+        let done = CGFloat(saved) + CGFloat(min(max(partial, 0), 1))
+        bar.fraction = total == 0 ? 0 : min(done/CGFloat(total), 1)
     }
 
     /// Leaves the finished card up just long enough to read, then fades it.

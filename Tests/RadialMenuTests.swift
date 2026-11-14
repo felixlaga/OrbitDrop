@@ -40,6 +40,17 @@ struct RadialMenuTests {
         let board = NSPasteboard(name:NSPasteboard.Name("OrbitDrop.IsolatedTests"))
         board.clearContents(); board.writeObjects([png as NSURL])
         precondition(RadialMenu.urls(from:board) == [png]); board.releaseGlobally()
-        print("PASS: reference action ordering, all wheel hit targets, center/outside exclusion, busy guard, empty input guard, and file drag pasteboard decoding.")
+        // Videos get their own four formats and no tools; one wheel never mixes videos with images.
+        let mov = URL(fileURLWithPath:"/tmp/OrbitDrop-sample.mov"), mp4 = URL(fileURLWithPath:"/tmp/Clip.MP4")
+        precondition(WheelAction.formats(for:mov).map(\.label) == ["MP4","MOV","GIF","M4A"])
+        precondition(WheelAction.formats(for:URL(fileURLWithPath:"/tmp/a.m4v")).map(\.key) == ["mp4","mov","gif","m4a"])
+        precondition(!WheelAction.hasTools(for:mov) && WheelAction.hasTools(for:png) && WheelAction.hasTools(for:pdf))
+        precondition(WheelAction.canOpen([mov,mp4]) && WheelAction.canOpen([png,pdf]))
+        precondition(!WheelAction.canOpen([png,mov]),"Images and videos must not share a wheel")
+        precondition(!WheelAction.canOpen([]) && !WheelAction.canOpen([URL(fileURLWithPath:"/tmp/notes.txt")]))
+        precondition(WheelAction.sameKind([mov,png,mp4]) == [mov,mp4] && WheelAction.sameKind([png,mov,pdf]) == [png,pdf])
+        view.actions = WheelAction.formats(for:mov)
+        for (i,point) in points.enumerated() { precondition(view.index(at:point) == i,"Video wedge \(i) hit target") }
+        print("PASS: reference action ordering, all wheel hit targets, center/outside exclusion, busy guard, empty input guard, file drag pasteboard decoding, and the video wheel rules.")
     }
 }
