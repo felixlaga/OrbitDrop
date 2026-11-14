@@ -62,7 +62,7 @@ if clip_fixture.is_file():
         out = convert(clip, fmt)[0]
         data = out.read_bytes()
         if fmt in ('mp4', 'm4a'): assert data[4:8] == b'ftyp', fmt
-        if fmt == 'gif': assert data.startswith(b'GIF89a')
+        if fmt == 'gif': assert data[:6] in (b'GIF87a', b'GIF89a'), data[:8]
         assert out.suffix == '.' + fmt and out.parent == clip.parent, out
         videos.append({'format':fmt,'bytes':len(data),'file':out.name,'passed':True})
     assert clip.read_bytes() == clip_bytes

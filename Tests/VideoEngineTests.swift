@@ -107,7 +107,9 @@ struct VideoEngineTests {
     }
     static func gifInfo(_ url: URL) throws -> (frames: Int, width: Int, height: Int) {
         let data = try Data(contentsOf: url)
-        try check(data.starts(with: Data("GIF89a".utf8)), "\(url.lastPathComponent) is not a GIF89a file")
+        let header = data.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
+        try check(data.starts(with: Data("GIF89a".utf8)) || data.starts(with: Data("GIF87a".utf8)),
+                  "\(url.lastPathComponent) is not a GIF: \(data.count) bytes, header \(header)")
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int else {

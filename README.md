@@ -2,7 +2,7 @@
 
 # OrbitDrop
 
-**Drag a file, pause, drop it on a wheel.** Convert, crop and restyle images and PDFs without opening an app.
+**Hold a file for 2 seconds, pick from a wheel.** Convert, crop and restyle images, PDFs and videos without opening an app.
 
 [**Download for Mac**](https://www.felixlaga.com/downloads/OrbitDrop-1.1.0-AppleSilicon.dmg) · Apple Silicon · macOS 13 or later
 
@@ -17,17 +17,24 @@
 
 ## How it works
 
-1. Start dragging an image or PDF in Finder.
-2. Hold still for a moment. The wheel opens around your pointer.
-3. Drop the file on a wedge.
+1. In Finder or on the Desktop, press and hold an image, PDF or video.
+2. Keep the pointer still for 2 seconds. The wheel opens around your pointer.
+3. Let go and click a wedge. Or keep holding, slide onto a wedge and let go.
 
-A drag that keeps moving never opens the wheel, so normal Finder moves work as before. The new file is saved next to the original, which stays untouched.
+You can also drag a file and pause for 2 seconds, which works from any app. A drag that keeps moving never opens the wheel, so normal Finder moves work as before. The new file is saved next to the original, which stays untouched.
 
 ## What it does
 
-**Convert.** PDFs go to DOCX, JPG, PNG or TXT. Images go to PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF or DOCX. A small card at the drop point shows the progress.
+**Convert.** PDFs go to DOCX, JPG, PNG or TXT. Images go to PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF or DOCX. Videos (MOV, MP4, M4V) go to MP4, MOV, GIF or M4A. A small card at the drop point shows the progress, and its ✕ cancels.
 
-**Tools.** Press **⌥ Option** while dragging to switch to the tools wheel. Press it again to switch back.
+| Video to | What you get |
+| --- | --- |
+| MP4 | H.264, which plays everywhere. H.264 with AAC sound is copied as is, so it's fast and lossless. Anything else (HEVC, ProRes) is re-encoded. |
+| MOV | The same picture and sound in a QuickTime file, copied as is |
+| GIF | 10 frames a second, at most 640 px wide, for clips up to 30 seconds |
+| M4A | The sound only |
+
+**Tools.** For images and PDFs, press **⌥ Option** while holding to switch to the tools wheel. Press it again to switch back. Videos have no tools wheel.
 
 | Tool | What it does |
 | --- | --- |
@@ -65,7 +72,8 @@ Click the menu-bar icon for these options:
 
 - **Open File…** (⌘O) opens the wheel for a file you pick, without dragging.
 - **Show Wheel** opens the wheel for the last file. **⌃⌥Space** does the same from anywhere.
-- **Show When Dragging Files** turns the drag wheel on or off.
+- **Open on 2-Second Hold** turns the hold and drag wheel on or off.
+- **Allow Finder Access…** shows up when OrbitDrop can't see your Finder selection yet. The hold needs it. See Privacy.
 - **Open at Login** starts OrbitDrop when you log in. It then also appears in **System Settings → General → Login Items**.
 - **Quit OrbitDrop** closes it.
 
@@ -74,7 +82,8 @@ In the wheel, click the centre to switch between formats and tools, drag the cen
 ## Privacy
 
 - **Everything stays on your Mac.** OrbitDrop makes no network connections and has no analytics or accounts.
-- **No special permissions.** It never asks for Accessibility or Screen Recording. It reads only the files you drop on it or open with it.
+- **One permission, for Finder.** At first launch macOS asks "OrbitDrop wants to control Finder". OrbitDrop uses it for one thing: when you hold a file still, it asks Finder which files are selected. It never changes files through Finder. If you say no, dragging a file and pausing still works. You can change it in **System Settings → Privacy & Security → Automation**.
+- **No other permissions.** It never asks for Accessibility or Screen Recording. It reads only the files you hold, drop on it or open with it.
 - **Folder access.** macOS may ask once whether OrbitDrop can use files in Desktop, Documents or Downloads, because it saves results next to the original. Click **Allow**. You can change this later in **System Settings → Privacy & Security → Files & Folders**.
 - **Originals are never changed.** Results are new files beside the original, with a number added if a name is taken.
 
@@ -88,7 +97,9 @@ bash build.sh     # builds build/OrbitDrop.app
 bash package.sh   # builds dist/OrbitDrop.dmg, a zip and checksums
 ```
 
-The app is Swift with AppKit, Core Graphics, ImageIO, PDFKit, Vision and Core Image. WebP and AVIF encoders are bundled with their licences. On macOS 26 the wheel, editors and progress card use Liquid Glass; older systems get a shaped blur. See [`VALIDATION.md`](VALIDATION.md) for what was tested and its limits.
+The app is Swift with AppKit, AVFoundation, Core Graphics, ImageIO, PDFKit, Vision and Core Image. WebP and AVIF encoders are bundled with their licences. Video uses only Apple's AVFoundation, so no video codec is bundled.
+
+Every push runs the tests, the build and the packaged-app check on a GitHub macOS 26 runner (`.github/workflows/macos.yml`). Each run uploads the built app as an artifact. On macOS 26 the wheel, editors and progress card use Liquid Glass; older systems get a shaped blur. See [`VALIDATION.md`](VALIDATION.md) for what was tested and its limits.
 
 ## Background
 
